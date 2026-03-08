@@ -20,7 +20,8 @@ except ImportError:
     PIL_AVAILABLE = False
 
 if PIL_AVAILABLE:
-    IMAGE_NEAREST = PILImage.Resampling.NEAREST if hasattr(PILImage, "Resampling") else PILImage.NEAREST
+    IMAGE_NEAREST = PILImage.Resampling.NEAREST if hasattr(
+        PILImage, "Resampling") else PILImage.NEAREST
 else:
     IMAGE_NEAREST = None
 
@@ -32,8 +33,8 @@ BORDER_COLOR = "#3c3c3c"
 TEXT_COLOR = "#d4d4d4"
 ACCENT_COLOR = "#007acc"
 
-DEFAULT_ZOOM = 16
-ZOOM_LEVELS = [8, 16, 32]
+ZOOM_LEVELS = [1, 2, 4, 8, 16]
+DEFAULT_ZOOM = ZOOM_LEVELS[-1]
 
 DEFAULT_PALETTE = [
     "#000000", "#1D2B53", "#7E2553", "#008751",
@@ -334,6 +335,7 @@ class DrawingCanvas(tk.Canvas):
         self.bind("<Button-2>", self.on_middle_click)
         self.bind("<B2-Motion>", self.on_middle_drag)
         self.bind("<ButtonRelease-2>", self.on_middle_release)
+        self.bind("<Enter>", lambda e: self.focus_set())
 
         self.bind("<space>", lambda e: self._start_pan(e))
         self.bind("<KeyRelease-space>", self._end_pan)
@@ -387,6 +389,7 @@ class DrawingCanvas(tk.Canvas):
             dy = event.y - self._start_pan_pos[1]
             self.offset_x += dx
             self.offset_y += dy
+            self._clamp_offsets()
             self._start_pan_pos = (event.x, event.y)
             self.redraw()
 
@@ -396,21 +399,19 @@ class DrawingCanvas(tk.Canvas):
 
     def on_mousewheel(self, event):
         if event.delta > 0:
-            self.zoom_in()
-        else:
-            self.zoom_out()
+            self.zoom_in(event.x, event.y)
+        elif event.delta < 0:
+            self.zoom_out(event.x, event.y)
 
-    def zoom_in(self):
+    def zoom_in(self, anchor_x=None, anchor_y=None):
         idx = ZOOM_LEVELS.index(self.zoom) if self.zoom in ZOOM_LEVELS else 1
         if idx < len(ZOOM_LEVELS) - 1:
-            self.zoom = ZOOM_LEVELS[idx + 1]
-            self.redraw()
+            self.set_zoom(ZOOM_LEVELS[idx + 1], anchor_x, anchor_y)
 
-    def zoom_out(self):
+    def zoom_out(self, anchor_x=None, anchor_y=None):
         idx = ZOOM_LEVELS.index(self.zoom) if self.zoom in ZOOM_LEVELS else 1
         if idx > 0:
-            self.zoom = ZOOM_LEVELS[idx - 1]
-            self.redraw()
+            self.set_zoom(ZOOM_LEVELS[idx - 1], anchor_x, anchor_y)
 
     def screen_to_canvas(self, sx, sy):
         w = self.layer_manager.width
@@ -418,6 +419,54 @@ class DrawingCanvas(tk.Canvas):
         cx = (sx - self.offset_x) // self.zoom
         cy = (sy - self.offset_y) // self.zoom
         return cx, cy
+
+    def center_document(self):
+        canvas_width = self.winfo_width() or 800
+        canvas_height = self.winfo_height() or 600
+        document_width = self.layer_manager.width * self.zoom
+        document_height = self.layer_manager.height * self.zoom
+        self.offset_x = (canvas_width - document_width) // 2
+        self.offset_y = (canvas_height - document_height) // 2
+        self._clamp_offsets()
+
+    def set_zoom(self, new_zoom, anchor_x=None, anchor_y=None):
+        if new_zoom == self.zoom:
+            return
+
+        canvas_width = self.winfo_width() or 800
+        canvas_height = self.winfo_height() or 600
+
+        if anchor_x is None:
+            anchor_x = canvas_width // 2
+        if anchor_y is None:
+            anchor_y = canvas_height // 2
+
+        pixel_x = (anchor_x - self.offset_x) / self.zoom
+        pixel_y = (anchor_y - self.offset_y) / self.zoom
+
+        self.zoom = new_zoom
+        self.offset_x = int(round(anchor_x - pixel_x * self.zoom))
+        self.offset_y = int(round(anchor_y - pixel_y * self.zoom))
+        self._clamp_offsets()
+        self.redraw()
+
+    def _clamp_offsets(self):
+        canvas_width = self.winfo_width() or 800
+        canvas_height = self.winfo_height() or 600
+        document_width = self.layer_manager.width * self.zoom
+        document_height = self.layer_manager.height * self.zoom
+
+        if document_width <= canvas_width:
+            self.offset_x = (canvas_width - document_width) // 2
+        else:
+            min_offset_x = canvas_width - document_width
+            self.offset_x = min(0, max(min_offset_x, self.offset_x))
+
+        if document_height <= canvas_height:
+            self.offset_y = (canvas_height - document_height) // 2
+        else:
+            min_offset_y = canvas_height - document_height
+            self.offset_y = min(0, max(min_offset_y, self.offset_y))
 
     def on_click(self, event):
         if self._space_held or self._middle_dragging:
@@ -587,7 +636,8 @@ class DrawingCanvas(tk.Canvas):
                     x1, y1, x2, y2, outline=ACCENT_COLOR, dash=(4, 4), width=2)
 
     def _redraw_with_images(self, w, h, zoom, canvas_width, canvas_height):
-        visible = self._get_visible_pixel_bounds(w, h, zoom, canvas_width, canvas_height)
+        visible = self._get_visible_pixel_bounds(
+            w, h, zoom, canvas_width, canvas_height)
         self._checkerboard_photo = None
         self._composite_photo = None
 
@@ -600,16 +650,21 @@ class DrawingCanvas(tk.Canvas):
         image_x = self.offset_x + start_x * zoom
         image_y = self.offset_y + start_y * zoom
 
-        checkerboard = self._build_checkerboard_image(start_x, start_y, crop_width, crop_height, zoom)
-        checkerboard = checkerboard.resize((crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
+        checkerboard = self._build_checkerboard_image(
+            start_x, start_y, crop_width, crop_height, zoom)
+        checkerboard = checkerboard.resize(
+            (crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
         self._checkerboard_photo = PILImageTk.PhotoImage(checkerboard)
-        self.create_image(image_x, image_y, image=self._checkerboard_photo, anchor=tk.NW)
+        self.create_image(image_x, image_y,
+                          image=self._checkerboard_photo, anchor=tk.NW)
 
         source = self.layer_manager.get_composite_image()
         source = source.crop((start_x, start_y, end_x, end_y))
-        scaled = source.resize((crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
+        scaled = source.resize(
+            (crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
         self._composite_photo = PILImageTk.PhotoImage(scaled)
-        self.create_image(image_x, image_y, image=self._composite_photo, anchor=tk.NW)
+        self.create_image(image_x, image_y,
+                          image=self._composite_photo, anchor=tk.NW)
 
         if self.app and self.app.show_grid:
             self._draw_grid_lines(start_x, start_y, end_x, end_y, zoom)
@@ -677,7 +732,8 @@ class DrawingCanvas(tk.Canvas):
 
         tile_size = check_size * 2
         tile = PILImage.new("RGB", (tile_size, tile_size), (42, 42, 42))
-        light_tile = PILImage.new("RGB", (check_size, check_size), (51, 51, 51))
+        light_tile = PILImage.new(
+            "RGB", (check_size, check_size), (51, 51, 51))
         tile.paste(light_tile, (check_size, 0))
         tile.paste(light_tile, (0, check_size))
         self._checkerboard_tile_cache[check_size] = tile
@@ -716,13 +772,13 @@ class App:
         self.background = "#FFFFFF"
         self.show_grid = True
         self.current_file = None
+        self._pending_view_reset = True
 
         self._load_icons()
         self._setup_ui()
         self._setup_menu()
         self._setup_keybindings()
-
-        self.canvas_frame.bind("<Configure>", lambda e: self.canvas.redraw())
+        self.root.after_idle(self._request_view_reset)
 
     def _load_icons(self):
         self.icons = {}
@@ -771,6 +827,7 @@ class App:
             canvas_container, self.layer_manager, self.tool_manager, self.history)
         self.canvas.app = self
         self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
         self._set_cursor(self.tool_manager.current_tool)
 
         right_panel = tk.Frame(
@@ -1200,9 +1257,9 @@ class App:
             label="Show Grid    (Ctrl+H)", variable=self.grid_var, command=self._toggle_grid)
         view_menu.add_separator()
         view_menu.add_command(
-            label="Zoom In", command=self.canvas.zoom_in, accelerator="+")
+            label="Zoom In", command=self.canvas.zoom_in, accelerator="Ctrl++")
         view_menu.add_command(
-            label="Zoom Out", command=self.canvas.zoom_out, accelerator="-")
+            label="Zoom Out", command=self.canvas.zoom_out, accelerator="Ctrl+-")
 
     def _setup_keybindings(self):
         """Setup keyboard shortcuts."""
@@ -1212,10 +1269,11 @@ class App:
         self.root.bind("<b>", lambda e: self._select_tool("bucket"))
         self.root.bind("<B>", lambda e: self._select_tool("bucket"))
         self.root.bind("<s>", lambda e: self._select_tool("selection"))
-        self.root.bind("<plus>", lambda e: self.canvas.zoom_in())
-        self.root.bind("<KP_Add>", lambda e: self.canvas.zoom_in())
-        self.root.bind("<minus>", lambda e: self.canvas.zoom_out())
-        self.root.bind("<KP_Subtract>", lambda e: self.canvas.zoom_out())
+        self.root.bind("<Control-plus>", lambda e: self.canvas.zoom_in())
+        self.root.bind("<Control-equal>", lambda e: self.canvas.zoom_in())
+        self.root.bind("<Control-KP_Add>", lambda e: self.canvas.zoom_in())
+        self.root.bind("<Control-minus>", lambda e: self.canvas.zoom_out())
+        self.root.bind("<Control-KP_Subtract>", lambda e: self.canvas.zoom_out())
 
         self.root.bind("<Control-z>", lambda e: self._undo())
         self.root.bind("<Control-y>", lambda e: self._redo())
@@ -1378,6 +1436,31 @@ class App:
         self._apply_document_state(layer_manager, history)
         self.current_file = None
 
+    def _request_view_reset(self):
+        self._pending_view_reset = True
+        if hasattr(self, "canvas"):
+            self.canvas.redraw()
+
+    def _on_canvas_configure(self, event):
+        if event.width <= 1 or event.height <= 1:
+            return
+
+        if self._pending_view_reset:
+            self._pending_view_reset = False
+            self._reset_canvas_view()
+        else:
+            self.canvas.redraw()
+
+    def _reset_canvas_view(self):
+        if self.canvas.winfo_width() <= 1 or self.canvas.winfo_height() <= 1:
+            self._request_view_reset()
+            return
+
+        self.canvas.zoom = DEFAULT_ZOOM
+        self.canvas.center_document()
+        self.canvas.focus_set()
+        self.canvas.redraw()
+
     def _apply_document_state(self, layer_manager, history):
         self.width = layer_manager.width
         self.height = layer_manager.height
@@ -1386,13 +1469,11 @@ class App:
         self.canvas.layer_manager = layer_manager
         self.canvas.history = history
         self.canvas.zoom = DEFAULT_ZOOM
-        self.canvas.offset_x = 0
-        self.canvas.offset_y = 0
         self.canvas.is_painting = False
         self.canvas.last_pos = None
         self.canvas.tool_manager.selection_start = None
         self.canvas.tool_manager.selection_end = None
-        self.canvas.redraw()
+        self._request_view_reset()
         self._update_layer_list()
 
     def _build_project_data(self):
