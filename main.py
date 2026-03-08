@@ -468,6 +468,12 @@ class DrawingCanvas(tk.Canvas):
             min_offset_y = canvas_height - document_height
             self.offset_y = min(0, max(min_offset_y, self.offset_y))
 
+    def pan_by(self, dx, dy):
+        self.offset_x += dx
+        self.offset_y += dy
+        self._clamp_offsets()
+        self.redraw()
+
     def on_click(self, event):
         if self._space_held or self._middle_dragging:
             return
@@ -1273,7 +1279,8 @@ class App:
         self.root.bind("<Control-equal>", lambda e: self.canvas.zoom_in())
         self.root.bind("<Control-KP_Add>", lambda e: self.canvas.zoom_in())
         self.root.bind("<Control-minus>", lambda e: self.canvas.zoom_out())
-        self.root.bind("<Control-KP_Subtract>", lambda e: self.canvas.zoom_out())
+        self.root.bind("<Control-KP_Subtract>",
+                       lambda e: self.canvas.zoom_out())
 
         self.root.bind("<Control-z>", lambda e: self._undo())
         self.root.bind("<Control-y>", lambda e: self._redo())
@@ -1287,6 +1294,10 @@ class App:
         self.root.bind("<Control-h>", lambda e: self._toggle_grid())
         self.root.bind("<Delete>", lambda e: self._delete_selection())
         self.root.bind("<BackSpace>", lambda e: self._delete_selection())
+        self.root.bind("<Left>", lambda e: self._pan_canvas_by_keys(1, 0))
+        self.root.bind("<Right>", lambda e: self._pan_canvas_by_keys(-1, 0))
+        self.root.bind("<Up>", lambda e: self._pan_canvas_by_keys(0, 1))
+        self.root.bind("<Down>", lambda e: self._pan_canvas_by_keys(0, -1))
 
     def _select_all(self):
         self.tool_manager.set_tool("selection")
@@ -1319,6 +1330,14 @@ class App:
             self.canvas.tool_manager.selection_start = None
             self.canvas.tool_manager.selection_end = None
             self.canvas.redraw()
+
+    def _pan_canvas_by_keys(self, direction_x, direction_y):
+        focused_widget = self.root.focus_get()
+        if isinstance(focused_widget, (tk.Entry, tk.Text, tk.Spinbox)):
+            return
+
+        pan_step = max(16, self.canvas.zoom * 2)
+        self.canvas.pan_by(direction_x * pan_step, direction_y * pan_step)
 
     def _center_dialog(self, dialog):
         self.root.update_idletasks()
