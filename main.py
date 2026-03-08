@@ -442,10 +442,45 @@ class DrawingCanvas(tk.Canvas):
             layer.set_pixel(cx, cy, (0, 0, 0, 0))
             self.redraw()
 
+        elif tool == "bucket":
+            if is_click:
+                self._bucket_fill(layer, cx, cy, app.foreground_rgba)
+                self.redraw()
+
         elif tool == "eyedropper":
             color = layer.get_pixel(cx, cy)
             if color[3] > 0:
                 app.set_foreground_color(f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}")
+
+    def _bucket_fill(self, layer, start_x, start_y, fill_color):
+        w, h = layer.width, layer.height
+        if not (0 <= start_x < w and 0 <= start_y < h):
+            return
+        
+        target_color = layer.get_pixel(start_x, start_y)
+        if target_color == fill_color:
+            return
+        
+        self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
+        
+        stack = [(start_x, start_y)]
+        visited = set()
+        
+        while stack:
+            x, y = stack.pop()
+            if (x, y) in visited:
+                continue
+            if not (0 <= x < w and 0 <= y < h):
+                continue
+            current = layer.get_pixel(x, y)
+            if current != target_color:
+                continue
+            visited.add((x, y))
+            layer.set_pixel(x, y, fill_color)
+            stack.append((x + 1, y))
+            stack.append((x - 1, y))
+            stack.append((x, y + 1))
+            stack.append((x, y - 1))
 
     def redraw(self):
         """Redraw the canvas with checkerboard and all layers."""
@@ -561,6 +596,7 @@ class App:
         tools = [
             ("D", "pencil", "Pencil (P)"),
             ("E", "eraser", "Eraser (E)"),
+            ("B", "bucket", "Bucket Fill (B)"),
             ("I", "eyedropper", "Eyedropper (I)"),
             ("S", "selection", "Selection (S)")
         ]
@@ -600,7 +636,9 @@ class App:
 
     CURSORS = {
         "pencil": "crosshair",
-        "eraser": "circle",
+        "eraser": "crosshair",
+        "bucket": "crosshair",
+        "eyedropper": "crosshair",
         "eyedropper": "crosshair",
         "selection": "crosshair"
     }
@@ -630,11 +668,43 @@ class App:
         btn_frame = tk.Frame(layer_frame, bg=PANEL_COLOR)
         btn_frame.pack(fill=tk.X, pady=2)
 
-        tk.Button(btn_frame, text="+", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._add_layer).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="-", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._delete_layer).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="D", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._duplicate_layer).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="^", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_up).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="v", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_down).pack(side=tk.LEFT, padx=1)
+        def make_tooltip(widget, text):
+            def show(event):
+                if hasattr(self, 'tooltip_window') and self.tooltip_window:
+                    self.tooltip_window.destroy()
+                self.tooltip_window = tk.Toplevel(widget)
+                self.tooltip_window.wm_overrideredirect(True)
+                x = widget.winfo_rootx() + widget.winfo_width() // 2
+                y = widget.winfo_rooty() - 25
+                self.tooltip_window.wm_geometry(f"+{x}+{y}")
+                label = tk.Label(self.tooltip_window, text=text, bg="#444444", fg="white", padx=6, pady=2, font=("Arial", 8))
+                label.pack()
+            def hide(event):
+                if hasattr(self, 'tooltip_window') and self.tooltip_window:
+                    self.tooltip_window.destroy()
+                    self.tooltip_window = None
+            widget.bind("<Enter>", show)
+            widget.bind("<Leave>", hide)
+
+        add_btn = tk.Button(btn_frame, text="+", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._add_layer)
+        add_btn.pack(side=tk.LEFT, padx=1)
+        make_tooltip(add_btn, "Add Layer")
+        
+        del_btn = tk.Button(btn_frame, text="-", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._delete_layer)
+        del_btn.pack(side=tk.LEFT, padx=1)
+        make_tooltip(del_btn, "Delete Layer")
+        
+        dup_btn = tk.Button(btn_frame, text="D", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._duplicate_layer)
+        dup_btn.pack(side=tk.LEFT, padx=1)
+        make_tooltip(dup_btn, "Duplicate Layer")
+        
+        up_btn = tk.Button(btn_frame, text="^", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_down)
+        up_btn.pack(side=tk.LEFT, padx=1)
+        make_tooltip(up_btn, "Move Layer Up")
+        
+        down_btn = tk.Button(btn_frame, text="v", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_up)
+        down_btn.pack(side=tk.LEFT, padx=1)
+        make_tooltip(down_btn, "Move Layer Down")
 
         self._update_layer_list()
 
@@ -839,6 +909,8 @@ class App:
         self.root.bind("<p>", lambda e: self._select_tool("pencil"))
         self.root.bind("<e>", lambda e: self._select_tool("eraser"))
         self.root.bind("<i>", lambda e: self._select_tool("eyedropper"))
+        self.root.bind("<b>", lambda e: self._select_tool("bucket"))
+        self.root.bind("<B>", lambda e: self._select_tool("bucket"))
         self.root.bind("<s>", lambda e: self._select_tool("selection"))
         self.root.bind("<plus>", lambda e: self.canvas.zoom_in())
         self.root.bind("<KP_Add>", lambda e: self.canvas.zoom_in())
