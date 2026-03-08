@@ -37,11 +37,12 @@ ACCENT_COLOR = "#007acc"
 ZOOM_LEVELS = [1, 2, 4, 8, 16]
 DEFAULT_ZOOM = ZOOM_LEVELS[-1]
 
+# Sweeti 16
 DEFAULT_PALETTE = [
-    "#000000", "#1D2B53", "#7E2553", "#008751",
-    "#AB5236", "#5F574F", "#C2C3C7", "#FFF1E8",
-    "#FF004D", "#FFA300", "#FFEC27", "#00E436",
-    "#29ADFF", "#83769C", "#FF77A8", "#FFCCAA"
+    "#1A1C2C", "#5D275D", "#B13E53", "#EF7D57",
+    "#FFCD75", "#A7F070", "#38B764", "#257179",
+    "#29366F", "#3B5DC9", "#41A6F6", "#73EFF7",
+    "#F4F4F4", "#94B0C2", "#566C86", "#333C57"
 ]
 
 
@@ -239,10 +240,13 @@ class ToolManager:
             return (x1, y1, x2, y2)
         return None
 
-    def set_tool(self, tool):
-        self.current_tool = tool
+    def clear_selection(self):
         self.selection_start = None
         self.selection_end = None
+
+    def set_tool(self, tool):
+        self.current_tool = tool
+        self.clear_selection()
 
 
 class PaletteManager:
@@ -441,6 +445,105 @@ class DrawingCanvas(tk.Canvas):
         self._checkerboard_photo = None
         self._composite_photo = None
         self._checkerboard_tile_cache = {}
+        self._selection_drag_start = None
+        self._selection_drag_offset = (0, 0)
+        self._selection_drag_original_pixels = None
+        self._selection_drag_base_pixels = None
+        self._selection_drag_pixels = None
+        self._selection_drag_bounds = None
+
+    def _ctrl_pressed(self, event):
+        return bool(event.state & 0x0004)
+
+    def _point_in_selection(self, x, y):
+        selection = self.tool_manager.selection
+        if not selection:
+            return False
+        x1, y1, x2, y2 = selection
+        return x1 <= x <= x2 and y1 <= y <= y2
+
+    def _reset_selection_drag(self):
+        self._selection_drag_start = None
+        self._selection_drag_offset = (0, 0)
+        self._selection_drag_original_pixels = None
+        self._selection_drag_base_pixels = None
+        self._selection_drag_pixels = None
+        self._selection_drag_bounds = None
+
+    def _build_selection_drag_data(self, layer, selection):
+        x1, y1, x2, y2 = selection
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+        original_pixels = bytearray(layer.pixels)
+        base_pixels = bytearray(original_pixels)
+        selection_pixels = bytearray(width * height * 4)
+
+        for row in range(height):
+            src_y = y1 + row
+            if not (0 <= src_y < layer.height):
+                continue
+            for col in range(width):
+                src_x = x1 + col
+                if not (0 <= src_x < layer.width):
+                    continue
+                src_idx = (src_y * layer.width + src_x) * 4
+                dst_idx = (row * width + col) * 4
+                selection_pixels[dst_idx:dst_idx +
+                                 4] = original_pixels[src_idx:src_idx + 4]
+                base_pixels[src_idx:src_idx + 4] = b"\x00\x00\x00\x00"
+
+        return original_pixels, base_pixels, selection_pixels, selection
+
+    def _begin_selection_drag(self, x, y):
+        selection = self.tool_manager.selection
+        if not selection:
+            return False
+
+        layer = self.layer_manager.get_active_layer()
+        original_pixels, base_pixels, selection_pixels, bounds = self._build_selection_drag_data(
+            layer, selection)
+        self._selection_drag_original_pixels = original_pixels
+        self._selection_drag_base_pixels = base_pixels
+        self._selection_drag_pixels = selection_pixels
+        self._selection_drag_bounds = bounds
+        self._selection_drag_start = (x, y)
+        self._selection_drag_offset = (0, 0)
+        return True
+
+    def _render_selection_drag(self, offset_x, offset_y):
+        if self._selection_drag_base_pixels is None or self._selection_drag_pixels is None:
+            return
+
+        layer = self.layer_manager.get_active_layer()
+        x1, y1, x2, y2 = self._selection_drag_bounds
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+        preview_pixels = bytearray(self._selection_drag_base_pixels)
+
+        for row in range(height):
+            dest_y = y1 + row + offset_y
+            if not (0 <= dest_y < layer.height):
+                continue
+            for col in range(width):
+                dest_x = x1 + col + offset_x
+                if not (0 <= dest_x < layer.width):
+                    continue
+                src_idx = (row * width + col) * 4
+                dst_idx = (dest_y * layer.width + dest_x) * 4
+                preview_pixels[dst_idx:dst_idx +
+                               4] = self._selection_drag_pixels[src_idx:src_idx + 4]
+
+        layer.pixels = preview_pixels
+        self.layer_manager.mark_dirty()
+
+    def clear_selection(self):
+        if self._selection_drag_original_pixels is not None:
+            layer = self.layer_manager.get_active_layer()
+            layer.pixels = bytearray(self._selection_drag_original_pixels)
+            self.layer_manager.mark_dirty()
+        self._reset_selection_drag()
+        self.tool_manager.clear_selection()
+        self.redraw()
 
     def _draw_line(self, x0, y0, x1, y1, color):
         layer = self.layer_manager.get_active_layer()
@@ -575,8 +678,12 @@ class DrawingCanvas(tk.Canvas):
         tool = self.tool_manager.current_tool
 
         if tool == "selection":
+            if self._ctrl_pressed(event) and self._point_in_selection(cx, cy):
+                self._begin_selection_drag(cx, cy)
+                return
             self.tool_manager.selection_start = (cx, cy)
             self.tool_manager.selection_end = (cx, cy)
+            self._reset_selection_drag()
         else:
             self.is_painting = True
             self._line_start_pos = (cx, cy)
@@ -597,6 +704,14 @@ class DrawingCanvas(tk.Canvas):
         shift_held = bool(event.state & 0x0001)
 
         if tool == "selection":
+            if self._selection_drag_start is not None:
+                dx = cx - self._selection_drag_start[0]
+                dy = cy - self._selection_drag_start[1]
+                if (dx, dy) != self._selection_drag_offset:
+                    self._selection_drag_offset = (dx, dy)
+                    self._render_selection_drag(dx, dy)
+                    self.redraw()
+                return
             self.tool_manager.selection_end = (cx, cy)
             self.redraw()
         elif self.is_painting:
@@ -625,6 +740,22 @@ class DrawingCanvas(tk.Canvas):
         self._stroke_snapshot = None
 
         if self.tool_manager.current_tool == "selection":
+            if self._selection_drag_start is not None and self._selection_drag_bounds is not None:
+                dx, dy = self._selection_drag_offset
+                layer = self.layer_manager.get_active_layer()
+                if dx == 0 and dy == 0:
+                    layer.pixels = bytearray(
+                        self._selection_drag_original_pixels)
+                    self.layer_manager.mark_dirty()
+                else:
+                    self.history.save_state(
+                        self.layer_manager.active_layer_index,
+                        self._selection_drag_original_pixels,
+                    )
+                    x1, y1, x2, y2 = self._selection_drag_bounds
+                    self.tool_manager.selection_start = (x1 + dx, y1 + dy)
+                    self.tool_manager.selection_end = (x2 + dx, y2 + dy)
+                self._reset_selection_drag()
             self.redraw()
 
     def on_right_click(self, event):
@@ -1409,6 +1540,9 @@ class App:
         self.root.bind("<b>", lambda e: self._select_tool("bucket"))
         self.root.bind("<B>", lambda e: self._select_tool("bucket"))
         self.root.bind("<s>", lambda e: self._select_tool("selection"))
+        self.root.bind("<Escape>", self._clear_selection)
+        self.root.bind("<Control-d>", self._clear_selection)
+        self.root.bind("<Control-D>", self._clear_selection)
         self.root.bind("<Control-plus>", lambda e: self.canvas.zoom_in())
         self.root.bind("<Control-equal>", lambda e: self.canvas.zoom_in())
         self.root.bind("<Control-KP_Add>", lambda e: self.canvas.zoom_in())
@@ -1451,6 +1585,10 @@ class App:
         self.grid_var.set(self.show_grid)
         self.canvas.redraw()
 
+    def _clear_selection(self, event=None):
+        self.canvas.clear_selection()
+        return "break"
+
     def _delete_selection(self):
         selection = self.canvas.tool_manager.selection
         if selection:
@@ -1462,8 +1600,7 @@ class App:
                 for x in range(max(0, x1), min(x2 + 1, layer.width)):
                     layer.set_pixel(x, y, (0, 0, 0, 0))
             self.layer_manager.mark_dirty()
-            self.canvas.tool_manager.selection_start = None
-            self.canvas.tool_manager.selection_end = None
+            self.canvas.tool_manager.clear_selection()
             self.canvas.redraw()
 
     def _pan_canvas_by_keys(self, direction_x, direction_y):
@@ -1648,8 +1785,8 @@ class App:
         self.canvas.zoom = DEFAULT_ZOOM
         self.canvas.is_painting = False
         self.canvas.last_pos = None
-        self.canvas.tool_manager.selection_start = None
-        self.canvas.tool_manager.selection_end = None
+        self.canvas._reset_selection_drag()
+        self.canvas.tool_manager.clear_selection()
         self._request_view_reset()
         self._update_layer_list()
 
