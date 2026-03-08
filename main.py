@@ -1320,17 +1320,34 @@ class App:
             self.canvas.tool_manager.selection_end = None
             self.canvas.redraw()
 
+    def _center_dialog(self, dialog):
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+
+        dialog_width = dialog.winfo_width()
+        dialog_height = dialog.winfo_height()
+        root_x = self.root.winfo_rootx()
+        root_y = self.root.winfo_rooty()
+        root_width = self.root.winfo_width()
+        root_height = self.root.winfo_height()
+
+        x = root_x + max((root_width - dialog_width) // 2, 0)
+        y = root_y + max((root_height - dialog_height) // 2, 0)
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
     def _new_file(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("New Canvas")
         dialog.geometry("300x200")
         dialog.configure(bg=BG_COLOR)
         dialog.transient(self.root)
+        dialog.bind("<Return>", lambda e: create_canvas())
 
         tk.Label(dialog, text="Width:", bg=BG_COLOR,
                  fg=TEXT_COLOR).pack(pady=5)
         width_var = tk.StringVar(value="16")
-        tk.Entry(dialog, textvariable=width_var, width=10).pack()
+        width_entry = tk.Entry(dialog, textvariable=width_var, width=10)
+        width_entry.pack()
 
         tk.Label(dialog, text="Height:", bg=BG_COLOR,
                  fg=TEXT_COLOR).pack(pady=5)
@@ -1346,8 +1363,11 @@ class App:
             except ValueError:
                 pass
 
-        tk.Button(dialog, text="Create", command=create_canvas,
-                  bg=PANEL_COLOR, fg=TEXT_COLOR).pack(pady=20)
+        create_button = tk.Button(dialog, text="Create", command=create_canvas,
+                                  bg=PANEL_COLOR, fg=TEXT_COLOR, default=tk.ACTIVE)
+        create_button.pack(pady=20)
+        self._center_dialog(dialog)
+        width_entry.focus_set()
 
     def _open_file(self):
         filepath = filedialog.askopenfilename(
