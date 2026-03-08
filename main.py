@@ -4,7 +4,7 @@ Single entry point for the application
 """
 
 import tkinter as tk
-from tkinter import ttk, colorchooser, filedialog, messagebox
+from tkinter import ttk, colorchooser, filedialog, messagebox, simpledialog
 import os
 import json
 
@@ -52,20 +52,20 @@ class HistoryManager:
         if len(self.undo_stack) > self.max_levels:
             self.undo_stack.pop(0)
 
-    def undo(self):
+    def undo(self, layers):
         """Pop from undo stack, push current state to redo, return state to restore."""
         if not self.undo_stack:
             return None
         layer_index, pixel_data = self.undo_stack.pop()
-        self.redo_stack.append((layer_index, bytearray(pixel_data)))
+        self.redo_stack.append((layer_index, bytearray(layers[layer_index].pixels)))
         return layer_index, pixel_data
 
-    def redo(self):
+    def redo(self, layers):
         """Pop from redo stack, push current state to undo, return state to restore."""
         if not self.redo_stack:
             return None
         layer_index, pixel_data = self.redo_stack.pop()
-        self.undo_stack.append((layer_index, bytearray(pixel_data)))
+        self.undo_stack.append((layer_index, bytearray(layers[layer_index].pixels)))
         return layer_index, pixel_data
 
     def can_undo(self):
@@ -123,10 +123,17 @@ class LayerManager:
         self.active_layer_index = len(self.layers) - 1
         return self.active_layer_index
 
-    def delete_layer(self):
+    def delete_layer(self, index=None):
         if len(self.layers) <= 1:
             return False
-        self.layers.pop(self.active_layer_index)
+
+        if index is None:
+            index = self.active_layer_index
+
+        self.layers.pop(index)
+
+        if self.active_layer_index > index:
+            self.active_layer_index -= 1
         if self.active_layer_index >= len(self.layers):
             self.active_layer_index = len(self.layers) - 1
         return True
@@ -242,14 +249,23 @@ class PaletteManager:
 
     def _load_image_colors(self, filepath):
         if not PIL_AVAILABLE:
-            return
+            return False
         img = PILImage.open(filepath)
         img = img.convert('RGBA')
-        unique_colors = set()
+        unique_colors = []
+        seen_colors = set()
         for pixel in img.getdata():
             if pixel[3] > 0:
-                unique_colors.add(f"#{pixel[0]:02X}{pixel[1]:02X}{pixel[2]:02X}")
-        self.colors = list(unique_colors)[:256]
+                color = f"#{pixel[0]:02X}{pixel[1]:02X}{pixel[2]:02X}"
+                if color not in seen_colors:
+                    seen_colors.add(color)
+                    unique_colors.append(color)
+                if len(unique_colors) >= 256:
+                    break
+        if not unique_colors:
+            return False
+        self.colors = unique_colors
+        return True
 
 
 class DrawingCanvas(tk.Canvas):
@@ -285,16 +301,8 @@ class DrawingCanvas(tk.Canvas):
         self._start_pan_pos = None
         self._middle_dragging = False
         self._space_held = False
-        self._shift_held = False
         self._line_start_pos = None
-
-        self.bind("<Shift-L>", lambda e: self._set_shift(True))
-        self.bind("<Shift-R>", lambda e: self._set_shift(True))
-        self.bind("<KeyRelease-Shift_L>", lambda e: self._set_shift(False))
-        self.bind("<KeyRelease-Shift_R>", lambda e: self._set_shift(False))
-
-    def _set_shift(self, state):
-        self._shift_held = state
+        self._stroke_snapshot = None
 
     def _draw_line(self, x0, y0, x1, y1, color):
         layer = self.layer_manager.get_active_layer()
@@ -379,6 +387,12 @@ class DrawingCanvas(tk.Canvas):
         else:
             self.is_painting = True
             self._line_start_pos = (cx, cy)
+            self.last_pos = (cx, cy)
+            if tool in ("pencil", "eraser"):
+                layer = self.layer_manager.get_active_layer()
+                self._stroke_snapshot = bytearray(layer.pixels)
+            else:
+                self._stroke_snapshot = None
             self.apply_tool(cx, cy, tool, is_click=True)
 
     def on_drag(self, event):
@@ -387,16 +401,21 @@ class DrawingCanvas(tk.Canvas):
 
         cx, cy = self.screen_to_canvas(event.x, event.y)
         tool = self.tool_manager.current_tool
+        shift_held = bool(event.state & 0x0001)
 
         if tool == "selection":
             self.tool_manager.selection_end = (cx, cy)
             self.redraw()
         elif self.is_painting:
-            if tool == "pencil" and self._shift_held and self._line_start_pos:
+            if tool == "pencil" and shift_held and self._line_start_pos and self._stroke_snapshot is not None:
                 layer = self.layer_manager.get_active_layer()
-                self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
+                layer.pixels = bytearray(self._stroke_snapshot)
                 self._draw_line(self._line_start_pos[0], self._line_start_pos[1], cx, cy, self.app.foreground_rgba)
-                self._line_start_pos = (cx, cy)
+                self.last_pos = (cx, cy)
+                self.redraw()
+            elif tool in ("pencil", "eraser") and self.last_pos and self.last_pos != (cx, cy):
+                color = self.app.foreground_rgba if tool == "pencil" else (0, 0, 0, 0)
+                self._draw_line(self.last_pos[0], self.last_pos[1], cx, cy, color)
                 self.last_pos = (cx, cy)
                 self.redraw()
             elif self.last_pos != (cx, cy):
@@ -407,6 +426,7 @@ class DrawingCanvas(tk.Canvas):
         self.is_painting = False
         self.last_pos = None
         self._line_start_pos = None
+        self._stroke_snapshot = None
 
         if self.tool_manager.current_tool == "selection":
             self.redraw()
@@ -546,8 +566,8 @@ class App:
         self.root.geometry("1024x768")
         self.root.configure(bg=BG_COLOR)
 
-        self.width = 32
-        self.height = 32
+        self.width = 16
+        self.height = 16
 
         self.history = HistoryManager(20)
         self.layer_manager = LayerManager(self.width, self.height, self.history)
@@ -610,6 +630,7 @@ class App:
         self.canvas = DrawingCanvas(canvas_container, self.layer_manager, self.tool_manager, self.history)
         self.canvas.app = self
         self.canvas.pack(fill=tk.BOTH, expand=True)
+        self._set_cursor(self.tool_manager.current_tool)
 
         right_panel = tk.Frame(main_container, bg=PANEL_COLOR, width=200, padx=2, pady=2)
         right_panel.pack(side=tk.RIGHT, fill=tk.Y)
@@ -723,13 +744,6 @@ class App:
         add_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(add_btn, "Add Layer")
         
-        trash_icon = self.icons.get("trash")
-        del_btn = tk.Button(btn_frame, image=trash_icon, width=20, height=18, bg=PANEL_COLOR, relief=tk.FLAT, command=self._delete_layer)
-        if not trash_icon:
-            del_btn.config(text="-", width=3, fg=TEXT_COLOR)
-        del_btn.pack(side=tk.LEFT, padx=1)
-        make_tooltip(del_btn, "Delete Layer")
-        
         dup_btn = tk.Button(btn_frame, text="D", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._duplicate_layer)
         dup_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(dup_btn, "Duplicate Layer")
@@ -761,7 +775,8 @@ class App:
 
         self.palette_inner.bind("<Configure>", lambda e: self.palette_canvas.configure(scrollregion=self.palette_canvas.bbox("all")))
 
-        tk.Button(palette_frame, text="Load Palette", bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._load_palette).pack(fill=tk.X, pady=2)
+        tk.Button(palette_frame, text="Load Palette", bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._load_palette).pack(fill=tk.X, pady=(2, 2))
+        tk.Button(palette_frame, text="Import Palette", bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._import_palette).pack(fill=tk.X)
 
         self._update_palette()
 
@@ -831,6 +846,18 @@ class App:
             else:
                 eye_btn.config(text="O" if layer.visible else "x")
             eye_btn.pack(side=tk.LEFT, padx=(2, 5))
+
+            trash_icon = self.icons.get("trash")
+            delete_btn = tk.Button(
+                row_frame, image=trash_icon, width=18, height=18, bg=bg_color,
+                relief=tk.FLAT,
+                command=lambda idx=i: self._delete_layer_by_index(idx)
+            )
+            if trash_icon:
+                delete_btn.config(image=trash_icon)
+            else:
+                delete_btn.config(text="-", fg=TEXT_COLOR)
+            delete_btn.pack(side=tk.RIGHT, padx=(5, 2))
             
             name_label = tk.Label(
                 row_frame, text=layer.name, bg=bg_color, fg=TEXT_COLOR,
@@ -838,6 +865,7 @@ class App:
             )
             name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
             name_label.bind("<Button-1>", lambda e, idx=i: self._select_layer(idx))
+            name_label.bind("<Double-Button-1>", lambda e, idx=i: self._rename_layer(idx))
             
             row_frame.bind("<Button-1>", lambda e, idx=i: self._select_layer(idx))
 
@@ -863,6 +891,11 @@ class App:
             self._update_layer_list()
             self.canvas.redraw()
 
+    def _delete_layer_by_index(self, index):
+        if self.layer_manager.delete_layer(index):
+            self._update_layer_list()
+            self.canvas.redraw()
+
     def _duplicate_layer(self):
         self.layer_manager.duplicate_layer()
         self._update_layer_list()
@@ -877,6 +910,24 @@ class App:
         if self.layer_manager.move_layer_down():
             self._update_layer_list()
             self.canvas.redraw()
+
+    def _rename_layer(self, index):
+        layer = self.layer_manager.layers[index]
+        new_name = simpledialog.askstring(
+            "Rename Layer",
+            "Layer name:",
+            initialvalue=layer.name,
+            parent=self.root
+        )
+        if new_name is None:
+            return
+
+        new_name = new_name.strip()
+        if not new_name:
+            return
+
+        layer.name = new_name
+        self._update_layer_list()
 
     def _toggle_layer_visibility(self, event=None):
         self.layer_manager.toggle_visibility(self.layer_manager.active_layer_index)
@@ -912,6 +963,26 @@ class App:
             self.palette_manager.load_palette_file(filepath)
             self._update_palette()
 
+    def _import_palette(self):
+        if not PIL_AVAILABLE:
+            messagebox.showerror("Error", "PIL not available")
+            return
+
+        filepath = filedialog.askopenfilename(
+            title="Import Palette from Image",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All Files", "*.*")]
+        )
+        if not filepath:
+            return
+
+        try:
+            if not self.palette_manager._load_image_colors(filepath):
+                messagebox.showwarning("Import Palette", "No visible colors were found in the selected image.")
+                return
+            self._update_palette()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to import palette: {e}")
+
     def _select_tool(self, tool):
         self.tool_manager.set_tool(tool)
         for tid, btn in self.tool_buttons.items():
@@ -932,7 +1003,7 @@ class App:
         file_menu.add_command(label="Open", command=self._open_file, accelerator="Ctrl+O")
         file_menu.add_command(label="Save", command=self._save_file, accelerator="Ctrl+S")
         file_menu.add_command(label="Save As", command=self._save_file_as)
-        file_menu.add_command(label="Export Flat", command=self._export_flat)
+        file_menu.add_command(label="Export PNG", command=self._export_flat)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
 
@@ -959,12 +1030,28 @@ class App:
 
         self.root.bind("<Control-z>", lambda e: self._undo())
         self.root.bind("<Control-y>", lambda e: self._redo())
+        self.root.bind("<Control-Y>", lambda e: self._redo())
+        self.root.bind("<Control-Shift-Z>", lambda e: self._redo())
         self.root.bind("<Control-s>", lambda e: self._save_file())
         self.root.bind("<Control-o>", lambda e: self._open_file())
         self.root.bind("<Control-n>", lambda e: self._new_file())
+        self.root.bind("<Control-a>", lambda e: self._select_all())
+        self.root.bind("<Control-A>", lambda e: self._select_all())
         self.root.bind("<Control-h>", lambda e: self._toggle_grid())
         self.root.bind("<Delete>", lambda e: self._delete_selection())
         self.root.bind("<BackSpace>", lambda e: self._delete_selection())
+
+    def _select_all(self):
+        self.tool_manager.set_tool("selection")
+        self.tool_manager.selection_start = (0, 0)
+        self.tool_manager.selection_end = (self.width - 1, self.height - 1)
+        for tid, btn in self.tool_buttons.items():
+            if tid == "selection":
+                btn.configure(bg=ACCENT_COLOR)
+            else:
+                btn.configure(bg=PANEL_COLOR)
+        self._set_cursor("selection")
+        self.canvas.redraw()
 
     def _toggle_grid(self):
         self.show_grid = not self.show_grid
@@ -992,11 +1079,11 @@ class App:
         dialog.transient(self.root)
 
         tk.Label(dialog, text="Width:", bg=BG_COLOR, fg=TEXT_COLOR).pack(pady=5)
-        width_var = tk.StringVar(value="32")
+        width_var = tk.StringVar(value="16")
         tk.Entry(dialog, textvariable=width_var, width=10).pack()
 
         tk.Label(dialog, text="Height:", bg=BG_COLOR, fg=TEXT_COLOR).pack(pady=5)
-        height_var = tk.StringVar(value="32")
+        height_var = tk.StringVar(value="16")
         tk.Entry(dialog, textvariable=height_var, width=10).pack()
 
         def create_canvas():
@@ -1077,14 +1164,14 @@ class App:
         self._save_file_as()
 
     def _undo(self):
-        state = self.history.undo()
+        state = self.history.undo(self.layer_manager.layers)
         if state:
             layer_idx, pixel_data = state
             self.layer_manager.layers[layer_idx].pixels = bytearray(pixel_data)
             self.canvas.redraw()
 
     def _redo(self):
-        state = self.history.redo()
+        state = self.history.redo(self.layer_manager.layers)
         if state:
             layer_idx, pixel_data = state
             self.layer_manager.layers[layer_idx].pixels = bytearray(pixel_data)
