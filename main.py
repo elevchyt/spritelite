@@ -872,6 +872,7 @@ class App:
         self.show_grid = True
         self.current_file = None
         self._pending_view_reset = True
+        self._pending_layer_select_job = None
 
         self._load_icons()
         self._setup_ui()
@@ -986,6 +987,22 @@ class App:
                      t=tooltip: show_tooltip(w, t, e))
             btn.bind("<Leave>", hide_tooltip)
             self.tool_buttons[tool_id] = btn
+
+        spacer = tk.Frame(parent, bg=PANEL_COLOR)
+        spacer.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas_size_var = tk.StringVar()
+        self.canvas_size_label = tk.Label(
+            parent,
+            textvariable=self.canvas_size_var,
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            font=("Arial", 8),
+            anchor="center",
+            justify="center"
+        )
+        self.canvas_size_label.pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=(6, 2))
+        self._update_canvas_size_display()
 
         self._select_tool("pencil")
 
@@ -1154,6 +1171,15 @@ class App:
         b = int(self.foreground[5:7], 16)
         return (r, g, b, 255)
 
+    def _format_layer_name(self, name):
+        if len(name) <= 18:
+            return name
+        return f"{name[:15]}..."
+
+    def _update_canvas_size_display(self):
+        if hasattr(self, "canvas_size_var"):
+            self.canvas_size_var.set(f"{self.width}x{self.height}")
+
     def _update_layer_list(self):
         for widget in self.layer_inner.winfo_children():
             widget.destroy()
@@ -1191,21 +1217,42 @@ class App:
             delete_btn.pack(side=tk.RIGHT, padx=(5, 2))
 
             name_label = tk.Label(
-                row_frame, text=layer.name, bg=bg_color, fg=TEXT_COLOR,
+                row_frame, text=self._format_layer_name(layer.name), bg=bg_color, fg=TEXT_COLOR,
                 font=("Arial", 9), anchor="w"
             )
             name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
             name_label.bind("<Button-1>", lambda e,
-                            idx=i: self._select_layer(idx))
+                            idx=i: self._schedule_layer_select(idx))
             name_label.bind("<Double-Button-1>", lambda e,
-                            idx=i: self._rename_layer(idx))
+                            idx=i: self._rename_layer_from_click(idx))
 
             row_frame.bind("<Button-1>", lambda e,
-                           idx=i: self._select_layer(idx))
+                           idx=i: self._schedule_layer_select(idx))
+            row_frame.bind("<Double-Button-1>", lambda e,
+                           idx=i: self._rename_layer_from_click(idx))
 
     def _select_layer(self, index):
         self.layer_manager.active_layer_index = index
         self._update_layer_list()
+
+    def _schedule_layer_select(self, index):
+        self._cancel_pending_layer_select()
+        self._pending_layer_select_job = self.root.after(
+            180, lambda idx=index: self._run_scheduled_layer_select(idx))
+
+    def _run_scheduled_layer_select(self, index):
+        self._pending_layer_select_job = None
+        self._select_layer(index)
+
+    def _cancel_pending_layer_select(self):
+        if self._pending_layer_select_job is not None:
+            self.root.after_cancel(self._pending_layer_select_job)
+            self._pending_layer_select_job = None
+
+    def _rename_layer_from_click(self, index):
+        self._cancel_pending_layer_select()
+        self._select_layer(index)
+        self._rename_layer(index)
 
     def _toggle_layer_visibility_by_index(self, index):
         self.layer_manager.toggle_visibility(index)
@@ -1249,19 +1296,26 @@ class App:
         layer = self.layer_manager.layers[index]
         new_name = simpledialog.askstring(
             "Rename Layer",
-            "Layer name:",
+            "Layer name (max 18 chars):",
             initialvalue=layer.name,
             parent=self.root
         )
         if new_name is None:
             return
 
-        new_name = new_name.strip()
+        new_name = new_name.strip()[:18]
         if not new_name:
             return
 
         layer.name = new_name
         self._update_layer_list()
+
+    def _rename_active_layer(self):
+        focused_widget = self.root.focus_get()
+        if isinstance(focused_widget, (tk.Entry, tk.Text, tk.Spinbox)):
+            return
+
+        self._rename_layer(self.layer_manager.active_layer_index)
 
     def _toggle_layer_visibility(self, event=None):
         self.layer_manager.toggle_visibility(
@@ -1371,6 +1425,7 @@ class App:
         self.root.bind("<Control-a>", lambda e: self._select_all())
         self.root.bind("<Control-A>", lambda e: self._select_all())
         self.root.bind("<Control-h>", lambda e: self._toggle_grid())
+        self.root.bind("<F2>", lambda e: self._rename_active_layer())
         self.root.bind("<Delete>", lambda e: self._delete_selection())
         self.root.bind("<BackSpace>", lambda e: self._delete_selection())
         self.root.bind("<Left>", lambda e: self._pan_canvas_by_keys(1, 0))
@@ -1584,6 +1639,7 @@ class App:
     def _apply_document_state(self, layer_manager, history):
         self.width = layer_manager.width
         self.height = layer_manager.height
+        self._update_canvas_size_display()
         self.history = history
         self.layer_manager = layer_manager
         self.canvas.layer_manager = layer_manager
