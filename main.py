@@ -181,6 +181,16 @@ class ToolManager:
         self.selection_end = None
         self.selection_rect = None
 
+    @property
+    def selection(self):
+        if self.selection_start and self.selection_end:
+            x1 = min(self.selection_start[0], self.selection_end[0])
+            y1 = min(self.selection_start[1], self.selection_end[1])
+            x2 = max(self.selection_start[0], self.selection_end[0])
+            y2 = max(self.selection_start[1], self.selection_end[1])
+            return (x1, y1, x2, y2)
+        return None
+
     def set_tool(self, tool):
         self.current_tool = tool
         self.selection_start = None
@@ -275,6 +285,36 @@ class DrawingCanvas(tk.Canvas):
         self._start_pan_pos = None
         self._middle_dragging = False
         self._space_held = False
+        self._shift_held = False
+        self._line_start_pos = None
+
+        self.bind("<Shift-L>", lambda e: self._set_shift(True))
+        self.bind("<Shift-R>", lambda e: self._set_shift(True))
+        self.bind("<KeyRelease-Shift_L>", lambda e: self._set_shift(False))
+        self.bind("<KeyRelease-Shift_R>", lambda e: self._set_shift(False))
+
+    def _set_shift(self, state):
+        self._shift_held = state
+
+    def _draw_line(self, x0, y0, x1, y1, color):
+        layer = self.layer_manager.get_active_layer()
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
+        
+        while True:
+            layer.set_pixel(x0, y0, color)
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
 
     def _start_pan(self, event):
         self._space_held = True
@@ -338,6 +378,7 @@ class DrawingCanvas(tk.Canvas):
             self.tool_manager.selection_end = (cx, cy)
         else:
             self.is_painting = True
+            self._line_start_pos = (cx, cy)
             self.apply_tool(cx, cy, tool, is_click=True)
 
     def on_drag(self, event):
@@ -351,13 +392,21 @@ class DrawingCanvas(tk.Canvas):
             self.tool_manager.selection_end = (cx, cy)
             self.redraw()
         elif self.is_painting:
-            if self.last_pos != (cx, cy):
+            if tool == "pencil" and self._shift_held and self._line_start_pos:
+                layer = self.layer_manager.get_active_layer()
+                self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
+                self._draw_line(self._line_start_pos[0], self._line_start_pos[1], cx, cy, self.app.foreground_rgba)
+                self._line_start_pos = (cx, cy)
+                self.last_pos = (cx, cy)
+                self.redraw()
+            elif self.last_pos != (cx, cy):
                 self.apply_tool(cx, cy, tool)
                 self.last_pos = (cx, cy)
 
     def on_release(self, event):
         self.is_painting = False
         self.last_pos = None
+        self._line_start_pos = None
 
         if self.tool_manager.current_tool == "selection":
             self.redraw()
@@ -510,21 +559,41 @@ class App:
     def _setup_toolbar(self, parent):
         """Setup the tool toolbar."""
         tools = [
-            ("✏", "pencil", "Pencil (P)"),
-            ("◻", "eraser", "Eraser (E)"),
-            ("◆", "eyedropper", "Eyedropper (I)"),
-            ("⬚", "selection", "Selection (S)")
+            ("D", "pencil", "Pencil (P)"),
+            ("E", "eraser", "Eraser (E)"),
+            ("I", "eyedropper", "Eyedropper (I)"),
+            ("S", "selection", "Selection (S)")
         ]
 
         self.tool_buttons = {}
+        self.tooltip_window = None
+        
+        def show_tooltip(widget, text, event):
+            if self.tooltip_window:
+                self.tooltip_window.destroy()
+            self.tooltip_window = tk.Toplevel(widget)
+            self.tooltip_window.wm_overrideredirect(True)
+            x = widget.winfo_rootx() + widget.winfo_width() // 2
+            y = widget.winfo_rooty() - 30
+            self.tooltip_window.wm_geometry(f"+{x}+{y}")
+            label = tk.Label(self.tooltip_window, text=text, bg="#444444", fg="white", padx=6, pady=2, font=("Arial", 8))
+            label.pack()
+        
+        def hide_tooltip(event):
+            if self.tooltip_window:
+                self.tooltip_window.destroy()
+                self.tooltip_window = None
+        
         for label, tool_id, tooltip in tools:
             btn = tk.Button(
                 parent, text=label, bg=PANEL_COLOR, fg=TEXT_COLOR,
                 activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-                relief=tk.FLAT, width=4, height=2, font=("Segoe UI Symbol", 12),
+                relief=tk.FLAT, width=4, height=2, font=("Arial", 11, "bold"),
                 command=lambda t=tool_id: self._select_tool(t)
             )
             btn.pack(pady=2, padx=2)
+            btn.bind("<Enter>", lambda e, w=btn, t=tooltip: show_tooltip(w, t, e))
+            btn.bind("<Leave>", hide_tooltip)
             self.tool_buttons[tool_id] = btn
 
         self._select_tool("pencil")
@@ -546,10 +615,17 @@ class App:
         layer_frame = tk.LabelFrame(parent, text="Layers", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
         layer_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.layer_listbox = tk.Listbox(layer_frame, bg="#333333", fg=TEXT_COLOR, height=8, selectbackground=ACCENT_COLOR)
-        self.layer_listbox.pack(fill=tk.X)
-        self.layer_listbox.bind("<<ListboxSelect>>", self._on_layer_select)
-        self.layer_listbox.bind("<Double-Button-1>", self._toggle_layer_visibility)
+        self.layer_canvas = tk.Canvas(layer_frame, bg="#333333", height=160, highlightthickness=0)
+        self.layer_scrollbar = tk.Scrollbar(layer_frame, orient=tk.VERTICAL, command=self.layer_canvas.yview)
+        self.layer_canvas.configure(yscrollcommand=self.layer_scrollbar.set)
+        
+        self.layer_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.layer_canvas.pack(fill=tk.X, expand=False)
+        
+        self.layer_inner = tk.Frame(self.layer_canvas, bg="#333333")
+        self.layer_canvas.create_window((0, 0), window=self.layer_inner, anchor=tk.NW)
+        
+        self.layer_inner.bind("<Configure>", lambda e: self.layer_canvas.configure(scrollregion=self.layer_canvas.bbox("all")))
 
         btn_frame = tk.Frame(layer_frame, bg=PANEL_COLOR)
         btn_frame.pack(fill=tk.X, pady=2)
@@ -557,9 +633,8 @@ class App:
         tk.Button(btn_frame, text="+", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._add_layer).pack(side=tk.LEFT, padx=1)
         tk.Button(btn_frame, text="-", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._delete_layer).pack(side=tk.LEFT, padx=1)
         tk.Button(btn_frame, text="D", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._duplicate_layer).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="↑", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_up).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="↓", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_down).pack(side=tk.LEFT, padx=1)
-        tk.Button(btn_frame, text="👁", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._toggle_layer_visibility).pack(side=tk.LEFT, padx=1)
+        tk.Button(btn_frame, text="^", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_up).pack(side=tk.LEFT, padx=1)
+        tk.Button(btn_frame, text="v", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_down).pack(side=tk.LEFT, padx=1)
 
         self._update_layer_list()
 
@@ -592,9 +667,7 @@ class App:
         self.fg_color_canvas = tk.Canvas(color_frame, width=50, height=50, bg=BG_COLOR, highlightthickness=1, highlightbackground=BORDER_COLOR)
         self.fg_color_canvas.pack(pady=2)
         self.fg_color_canvas.bind("<Button-1>", lambda e: self._choose_color("foreground"))
-
-        tk.Button(color_frame, text="FG", bg=PANEL_COLOR, fg=TEXT_COLOR, command=lambda: self._choose_color("foreground")).pack(side=tk.LEFT, padx=2)
-        tk.Button(color_frame, text="BG", bg=PANEL_COLOR, fg=TEXT_COLOR, command=lambda: self._choose_color("background")).pack(side=tk.LEFT, padx=2)
+        self.fg_color_canvas.bind("<Button-3>", lambda e: self._choose_color("background"))
 
         self._update_color_display()
 
@@ -631,17 +704,44 @@ class App:
         return (r, g, b, 255)
 
     def _update_layer_list(self):
-        self.layer_listbox.delete(0, tk.END)
+        for widget in self.layer_inner.winfo_children():
+            widget.destroy()
+        
         for i, layer in enumerate(self.layer_manager.layers):
-            visibility = "👁" if layer.visible else "○"
-            prefix = "● " if i == self.layer_manager.active_layer_index else "  "
-            self.layer_listbox.insert(tk.END, f"{prefix}{visibility} {layer.name}")
+            is_active = i == self.layer_manager.active_layer_index
+            bg_color = ACCENT_COLOR if is_active else "#333333"
+            
+            row_frame = tk.Frame(self.layer_inner, bg=bg_color, pady=1)
+            row_frame.pack(fill=tk.X)
+            
+            eye_text = "O" if layer.visible else "x"
+            eye_btn = tk.Button(
+                row_frame, text=eye_text, width=2, bg=bg_color, fg=TEXT_COLOR,
+                relief=tk.FLAT, font=("Arial", 9, "bold"),
+                command=lambda idx=i: self._toggle_layer_visibility_by_index(idx)
+            )
+            eye_btn.pack(side=tk.LEFT, padx=(2, 5))
+            
+            name_label = tk.Label(
+                row_frame, text=layer.name, bg=bg_color, fg=TEXT_COLOR,
+                font=("Arial", 9), anchor="w"
+            )
+            name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            name_label.bind("<Button-1>", lambda e, idx=i: self._select_layer(idx))
+            
+            row_frame.bind("<Button-1>", lambda e, idx=i: self._select_layer(idx))
+
+    def _select_layer(self, index):
+        self.layer_manager.active_layer_index = index
+        self._update_layer_list()
+
+    def _toggle_layer_visibility_by_index(self, index):
+        self.layer_manager.toggle_visibility(index)
+        self._update_layer_list()
+        self.canvas.redraw()
 
     def _on_layer_select(self, event):
-        selection = self.layer_listbox.curselection()
-        if selection:
-            self.layer_manager.active_layer_index = selection[0]
-            self._update_layer_list()
+        pass
 
     def _add_layer(self):
         self.layer_manager.add_layer()
@@ -729,7 +829,7 @@ class App:
         view_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
         self.grid_var = tk.BooleanVar(value=True)
-        view_menu.add_checkbutton(label="Show Grid", variable=self.grid_var, command=self._toggle_grid)
+        view_menu.add_checkbutton(label="Show Grid    (Ctrl+H)", variable=self.grid_var, command=self._toggle_grid)
         view_menu.add_separator()
         view_menu.add_command(label="Zoom In", command=self.canvas.zoom_in, accelerator="+")
         view_menu.add_command(label="Zoom Out", command=self.canvas.zoom_out, accelerator="-")
@@ -750,10 +850,27 @@ class App:
         self.root.bind("<Control-s>", lambda e: self._save_file())
         self.root.bind("<Control-o>", lambda e: self._open_file())
         self.root.bind("<Control-n>", lambda e: self._new_file())
+        self.root.bind("<Control-h>", lambda e: self._toggle_grid())
+        self.root.bind("<Delete>", lambda e: self._delete_selection())
+        self.root.bind("<BackSpace>", lambda e: self._delete_selection())
 
     def _toggle_grid(self):
-        self.show_grid = self.grid_var.get()
+        self.show_grid = not self.show_grid
+        self.grid_var.set(self.show_grid)
         self.canvas.redraw()
+
+    def _delete_selection(self):
+        selection = self.canvas.tool_manager.selection
+        if selection:
+            x1, y1, x2, y2 = selection
+            layer = self.layer_manager.get_active_layer()
+            self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
+            for y in range(max(0, y1), min(y2 + 1, layer.height)):
+                for x in range(max(0, x1), min(x2 + 1, layer.width)):
+                    layer.set_pixel(x, y, (0, 0, 0, 0))
+            self.canvas.tool_manager.selection_start = None
+            self.canvas.tool_manager.selection_end = None
+            self.canvas.redraw()
 
     def _new_file(self):
         dialog = tk.Toplevel(self.root)
