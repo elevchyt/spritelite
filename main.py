@@ -1001,7 +1001,8 @@ class App:
             anchor="center",
             justify="center"
         )
-        self.canvas_size_label.pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=(6, 2))
+        self.canvas_size_label.pack(
+            side=tk.BOTTOM, fill=tk.X, padx=2, pady=(6, 2))
         self._update_canvas_size_display()
 
         self._select_tool("pencil")
@@ -1122,7 +1123,7 @@ class App:
     def _setup_color_picker(self, parent):
         """Setup the color picker display."""
         color_frame = tk.LabelFrame(
-            parent, text="Colors", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
+            parent, text="Color", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
         color_frame.pack(fill=tk.X)
 
         self.fg_color_canvas = tk.Canvas(
@@ -1393,7 +1394,7 @@ class App:
         menubar.add_cascade(label="View", menu=view_menu)
         self.grid_var = tk.BooleanVar(value=True)
         view_menu.add_checkbutton(
-            label="Show Grid    (Ctrl+H)", variable=self.grid_var, command=self._toggle_grid)
+            label="Show Grid", variable=self.grid_var, command=self._toggle_grid, accelerator="Ctrl+H")
         view_menu.add_separator()
         view_menu.add_command(
             label="Zoom In", command=self.canvas.zoom_in, accelerator="Ctrl++")
@@ -1490,7 +1491,7 @@ class App:
 
     def _new_file(self):
         dialog = tk.Toplevel(self.root)
-        dialog.title("New Canvas")
+        dialog.title("New File")
         dialog.geometry("300x200")
         dialog.configure(bg=BG_COLOR)
         dialog.transient(self.root)
