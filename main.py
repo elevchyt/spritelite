@@ -1291,6 +1291,8 @@ class App:
     def set_foreground_color(self, color):
         self.foreground = color
         self._update_color_display()
+        if hasattr(self, "palette_inner"):
+            self._update_palette()
 
     def set_background_color(self, color):
         self.background = color
@@ -1464,8 +1466,11 @@ class App:
         for i, color in enumerate(colors):
             row = i // cols
             col = i % cols
+            is_selected = color.upper() == self.foreground.upper()
             swatch = tk.Canvas(self.palette_inner, width=20, height=20, bg=color,
-                               highlightthickness=1, highlightbackground=BORDER_COLOR)
+                               highlightthickness=2 if is_selected else 1,
+                               highlightbackground=ACCENT_COLOR if is_selected else BORDER_COLOR,
+                               highlightcolor=ACCENT_COLOR if is_selected else BORDER_COLOR)
             swatch.grid(row=row, column=col, padx=1, pady=1)
             swatch.bind("<Button-1>", lambda e, c=color: self._set_color(e, c))
             swatch.bind("<Button-3>", lambda e,
