@@ -670,6 +670,12 @@ class DrawingCanvas(tk.Canvas):
         self._clamp_offsets()
         self.redraw()
 
+    def handle_resize(self, previous_width, previous_height, new_width, new_height):
+        self.offset_x += int(round((new_width - previous_width) / 2))
+        self.offset_y += int(round((new_height - previous_height) / 2))
+        self._clamp_offsets()
+        self.redraw()
+
     def on_click(self, event):
         if self._space_held or self._middle_dragging:
             return
@@ -1004,6 +1010,7 @@ class App:
         self.current_file = None
         self._pending_view_reset = True
         self._pending_layer_select_job = None
+        self._last_canvas_size = None
 
         self._load_icons()
         self._setup_ui()
@@ -1766,8 +1773,14 @@ class App:
         if self._pending_view_reset:
             self._pending_view_reset = False
             self._reset_canvas_view()
+        elif self._last_canvas_size is not None:
+            previous_width, previous_height = self._last_canvas_size
+            self.canvas.handle_resize(
+                previous_width, previous_height, event.width, event.height)
         else:
             self.canvas.redraw()
+
+        self._last_canvas_size = (event.width, event.height)
 
     def _reset_canvas_view(self):
         if self.canvas.winfo_width() <= 1 or self.canvas.winfo_height() <= 1:
@@ -1778,6 +1791,10 @@ class App:
         self.canvas.center_document()
         self.canvas.focus_set()
         self.canvas.redraw()
+        self._last_canvas_size = (
+            self.canvas.winfo_width(),
+            self.canvas.winfo_height(),
+        )
 
     def _apply_document_state(self, layer_manager, history):
         self.width = layer_manager.width
@@ -1792,6 +1809,7 @@ class App:
         self.canvas.last_pos = None
         self.canvas._reset_selection_drag()
         self.canvas.tool_manager.clear_selection()
+        self._last_canvas_size = None
         self._request_view_reset()
         self._update_layer_list()
 
