@@ -577,6 +577,7 @@ class App:
         self.foreground = "#000000"
         self.background = "#FFFFFF"
         self.show_grid = True
+        self.current_file = None
 
         self._load_icons()
         self._setup_ui()
@@ -1003,6 +1004,7 @@ class App:
         file_menu.add_command(label="Open", command=self._open_file, accelerator="Ctrl+O")
         file_menu.add_command(label="Save", command=self._save_file, accelerator="Ctrl+S")
         file_menu.add_command(label="Save As", command=self._save_file_as)
+        file_menu.add_command(label="Import PNG", command=self._import_png)
         file_menu.add_command(label="Export PNG", command=self._export_flat)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
@@ -1090,16 +1092,7 @@ class App:
             try:
                 w = min(128, max(1, int(width_var.get())))
                 h = min(128, max(1, int(height_var.get())))
-                self.width = w
-                self.height = h
-                self.history = HistoryManager(20)
-                self.layer_manager = LayerManager(w, h, self.history)
-                self.canvas.layer_manager = self.layer_manager
-                self.canvas.zoom = DEFAULT_ZOOM
-                self.canvas.offset_x = 0
-                self.canvas.offset_y = 0
-                self.canvas.redraw()
-                self._update_layer_list()
+                self._load_empty_canvas(w, h)
                 dialog.destroy()
             except ValueError:
                 pass
@@ -1108,60 +1101,182 @@ class App:
 
     def _open_file(self):
         filepath = filedialog.askopenfilename(
-            title="Open Image",
-            filetypes=[("PNG Files", "*.png"), ("All Files", "*.*")]
+            title="Open Project",
+            filetypes=[("SpriteLite Projects", "*.sprlite"), ("All Files", "*.*")]
         )
-        if filepath and PIL_AVAILABLE:
-            try:
-                img = PILImage.open(filepath)
-                if img.mode != "RGBA":
-                    img = img.convert("RGBA")
-                self.width = img.width
-                self.height = img.height
-                self.history = HistoryManager(20)
-                self.layer_manager = LayerManager(self.width, self.height, self.history)
-                layer = self.layer_manager.layers[0]
-                layer.pixels = bytearray(img.tobytes())
-                self.canvas.layer_manager = self.layer_manager
-                self.canvas.zoom = DEFAULT_ZOOM
-                self.canvas.offset_x = 0
-                self.canvas.offset_y = 0
-                self.canvas.redraw()
-                self._update_layer_list()
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to open image: {e}")
+        if not filepath:
+            return
+
+        try:
+            self._load_project_file(filepath)
+            self.current_file = filepath
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open project: {e}")
 
     def _save_file(self):
-        if not hasattr(self, 'current_file'):
+        if not self.current_file:
             self._save_file_as()
         else:
             self._save_to_file(self.current_file)
 
     def _save_file_as(self):
         filepath = filedialog.asksaveasfilename(
-            title="Save Image",
-            defaultextension=".png",
-            filetypes=[("PNG Files", "*.png")]
+            title="Save Project",
+            defaultextension=".sprlite",
+            filetypes=[("SpriteLite Projects", "*.sprlite")]
         )
         if filepath:
             self.current_file = filepath
             self._save_to_file(filepath)
 
     def _save_to_file(self, filepath):
-        if not PIL_AVAILABLE:
-            messagebox.showerror("Error", "PIL not available")
-            return
-
         try:
-            img = PILImage.new("RGBA", (self.width, self.height))
-            composite = self.layer_manager.render_composite()
-            img.frombytes(composite)
-            img.save(filepath, "PNG")
+            if filepath.lower().endswith(".sprlite"):
+                project_data = self._build_project_data()
+                with open(filepath, "w", encoding="utf-8") as file_handle:
+                    json.dump(project_data, file_handle)
+            else:
+                self._save_png(filepath)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save image: {e}")
 
     def _export_flat(self):
-        self._save_file_as()
+        filepath = filedialog.asksaveasfilename(
+            title="Export PNG",
+            defaultextension=".png",
+            filetypes=[("PNG Files", "*.png")]
+        )
+        if filepath:
+            try:
+                self._save_png(filepath)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export PNG: {e}")
+
+    def _import_png(self):
+        if not PIL_AVAILABLE:
+            messagebox.showerror("Error", "PIL not available")
+            return
+
+        filepath = filedialog.askopenfilename(
+            title="Import PNG",
+            filetypes=[("PNG Files", "*.png"), ("All Files", "*.*")]
+        )
+        if not filepath:
+            return
+
+        try:
+            img = PILImage.open(filepath)
+            if img.mode != "RGBA":
+                img = img.convert("RGBA")
+
+            self._load_empty_canvas(img.width, img.height)
+            layer = self.layer_manager.layers[0]
+            layer.pixels = bytearray(img.tobytes())
+            self.current_file = None
+            self.canvas.redraw()
+            self._update_layer_list()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to import PNG: {e}")
+
+    def _load_empty_canvas(self, width, height):
+        history = HistoryManager(20)
+        layer_manager = LayerManager(width, height, history)
+        self._apply_document_state(layer_manager, history)
+        self.current_file = None
+
+    def _apply_document_state(self, layer_manager, history):
+        self.width = layer_manager.width
+        self.height = layer_manager.height
+        self.history = history
+        self.layer_manager = layer_manager
+        self.canvas.layer_manager = layer_manager
+        self.canvas.history = history
+        self.canvas.zoom = DEFAULT_ZOOM
+        self.canvas.offset_x = 0
+        self.canvas.offset_y = 0
+        self.canvas.is_painting = False
+        self.canvas.last_pos = None
+        self.canvas.tool_manager.selection_start = None
+        self.canvas.tool_manager.selection_end = None
+        self.canvas.redraw()
+        self._update_layer_list()
+
+    def _build_project_data(self):
+        return {
+            "format": "spritelite-project",
+            "version": 1,
+            "width": self.width,
+            "height": self.height,
+            "active_layer_index": self.layer_manager.active_layer_index,
+            "foreground": self.foreground,
+            "background": self.background,
+            "show_grid": self.show_grid,
+            "palette": self.palette_manager.colors,
+            "layers": [
+                {
+                    "name": layer.name,
+                    "visible": layer.visible,
+                    "pixels": bytes(layer.pixels).hex()
+                }
+                for layer in self.layer_manager.layers
+            ]
+        }
+
+    def _load_project_file(self, filepath):
+        with open(filepath, "r", encoding="utf-8") as file_handle:
+            project_data = json.load(file_handle)
+
+        if project_data.get("format") != "spritelite-project":
+            raise ValueError("Unsupported project file format.")
+
+        width = int(project_data["width"])
+        height = int(project_data["height"])
+        if width < 1 or height < 1:
+            raise ValueError("Project dimensions are invalid.")
+
+        history = HistoryManager(20)
+        layer_manager = LayerManager(width, height, history)
+        layer_manager.layers = []
+
+        expected_pixel_bytes = width * height * 4
+        for layer_data in project_data.get("layers", []):
+            layer = Layer(layer_data.get("name", f"Layer {len(layer_manager.layers) + 1}"), width, height)
+            layer.visible = bool(layer_data.get("visible", True))
+            pixel_data = bytearray.fromhex(layer_data.get("pixels", ""))
+            if len(pixel_data) != expected_pixel_bytes:
+                raise ValueError("Layer pixel data does not match project size.")
+            layer.pixels = pixel_data
+            layer_manager.layers.append(layer)
+
+        if not layer_manager.layers:
+            layer_manager.layers = [Layer("Layer 1", width, height)]
+
+        active_layer_index = int(project_data.get("active_layer_index", 0))
+        layer_manager.active_layer_index = min(max(active_layer_index, 0), len(layer_manager.layers) - 1)
+
+        self.foreground = project_data.get("foreground", "#000000")
+        self.background = project_data.get("background", "#FFFFFF")
+        self.show_grid = bool(project_data.get("show_grid", True))
+        self.grid_var.set(self.show_grid)
+
+        palette = project_data.get("palette")
+        if isinstance(palette, list) and palette:
+            self.palette_manager.colors = palette
+        else:
+            self.palette_manager.colors = DEFAULT_PALETTE[:]
+
+        self._apply_document_state(layer_manager, history)
+        self._update_palette()
+        self._update_color_display()
+
+    def _save_png(self, filepath):
+        if not PIL_AVAILABLE:
+            raise RuntimeError("PIL not available")
+
+        img = PILImage.new("RGBA", (self.width, self.height))
+        composite = self.layer_manager.render_composite()
+        img.frombytes(composite)
+        img.save(filepath, "PNG")
 
     def _undo(self):
         state = self.history.undo(self.layer_manager.layers)
