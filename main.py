@@ -369,7 +369,7 @@ class DrawingCanvas(tk.Canvas):
             layer = self.layer_manager.get_active_layer()
             color = layer.get_pixel(cx, cy)
             if color[3] > 0:
-                self.master.set_background_color(f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}")
+                self.app.set_background_color(f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}")
 
     def on_right_drag(self, event):
         pass
@@ -379,7 +379,7 @@ class DrawingCanvas(tk.Canvas):
 
     def apply_tool(self, cx, cy, tool, is_click=False):
         layer = self.layer_manager.get_active_layer()
-        app = self.master.master
+        app = self.app
 
         if tool == "pencil":
             if is_click:
@@ -442,6 +442,14 @@ class DrawingCanvas(tk.Canvas):
                 y2 = self.offset_y + (max(start[1], end[1]) + 1) * zoom
                 self.create_rectangle(x1, y1, x2, y2, outline=ACCENT_COLOR, dash=(4, 4), width=2)
 
+        if self.app and self.app.show_grid:
+            for x in range(w + 1):
+                px = self.offset_x + x * zoom
+                self.create_line(px, self.offset_y, px, self.offset_y + h * zoom, fill="#444444", width=1)
+            for y in range(h + 1):
+                py = self.offset_y + y * zoom
+                self.create_line(self.offset_x, py, self.offset_x + w * zoom, py, fill="#444444", width=1)
+
         self.tag_raise("selection")
 
 
@@ -464,6 +472,7 @@ class App:
 
         self.foreground = "#000000"
         self.background = "#FFFFFF"
+        self.show_grid = True
 
         self._setup_ui()
         self._setup_menu()
@@ -501,10 +510,10 @@ class App:
     def _setup_toolbar(self, parent):
         """Setup the tool toolbar."""
         tools = [
-            ("P", "pencil", "Pencil (P)"),
-            ("E", "eraser", "Eraser (E)"),
-            ("I", "eyedropper", "Eyedropper (I)"),
-            ("S", "selection", "Selection (S)")
+            ("✏", "pencil", "Pencil (P)"),
+            ("◻", "eraser", "Eraser (E)"),
+            ("◆", "eyedropper", "Eyedropper (I)"),
+            ("⬚", "selection", "Selection (S)")
         ]
 
         self.tool_buttons = {}
@@ -512,13 +521,25 @@ class App:
             btn = tk.Button(
                 parent, text=label, bg=PANEL_COLOR, fg=TEXT_COLOR,
                 activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-                relief=tk.FLAT, width=4, height=2,
+                relief=tk.FLAT, width=4, height=2, font=("Segoe UI Symbol", 12),
                 command=lambda t=tool_id: self._select_tool(t)
             )
             btn.pack(pady=2, padx=2)
             self.tool_buttons[tool_id] = btn
 
         self._select_tool("pencil")
+
+    CURSORS = {
+        "pencil": "crosshair",
+        "eraser": "circle",
+        "eyedropper": "crosshair",
+        "selection": "crosshair"
+    }
+
+    def _set_cursor(self, tool):
+        cursor = self.CURSORS.get(tool, "arrow")
+        if hasattr(self, 'canvas'):
+            self.canvas.configure(cursor=cursor)
 
     def _setup_layer_panel(self, parent):
         """Setup the layer panel."""
@@ -528,6 +549,7 @@ class App:
         self.layer_listbox = tk.Listbox(layer_frame, bg="#333333", fg=TEXT_COLOR, height=8, selectbackground=ACCENT_COLOR)
         self.layer_listbox.pack(fill=tk.X)
         self.layer_listbox.bind("<<ListboxSelect>>", self._on_layer_select)
+        self.layer_listbox.bind("<Double-Button-1>", self._toggle_layer_visibility)
 
         btn_frame = tk.Frame(layer_frame, bg=PANEL_COLOR)
         btn_frame.pack(fill=tk.X, pady=2)
@@ -537,6 +559,7 @@ class App:
         tk.Button(btn_frame, text="D", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._duplicate_layer).pack(side=tk.LEFT, padx=1)
         tk.Button(btn_frame, text="↑", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_up).pack(side=tk.LEFT, padx=1)
         tk.Button(btn_frame, text="↓", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_down).pack(side=tk.LEFT, padx=1)
+        tk.Button(btn_frame, text="👁", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._toggle_layer_visibility).pack(side=tk.LEFT, padx=1)
 
         self._update_layer_list()
 
@@ -610,7 +633,7 @@ class App:
     def _update_layer_list(self):
         self.layer_listbox.delete(0, tk.END)
         for i, layer in enumerate(self.layer_manager.layers):
-            visibility = "[V]" if layer.visible else "[ ]"
+            visibility = "👁" if layer.visible else "○"
             prefix = "● " if i == self.layer_manager.active_layer_index else "  "
             self.layer_listbox.insert(tk.END, f"{prefix}{visibility} {layer.name}")
 
@@ -644,6 +667,11 @@ class App:
         if self.layer_manager.move_layer_down():
             self._update_layer_list()
             self.canvas.redraw()
+
+    def _toggle_layer_visibility(self, event=None):
+        self.layer_manager.toggle_visibility(self.layer_manager.active_layer_index)
+        self._update_layer_list()
+        self.canvas.redraw()
 
     def _update_palette(self):
         for widget in self.palette_inner.winfo_children():
@@ -681,6 +709,7 @@ class App:
                 btn.configure(bg=ACCENT_COLOR)
             else:
                 btn.configure(bg=PANEL_COLOR)
+        self._set_cursor(tool)
 
     def _setup_menu(self):
         """Setup the menu bar."""
@@ -696,6 +725,14 @@ class App:
         file_menu.add_command(label="Export Flat", command=self._export_flat)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
+
+        view_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
+        menubar.add_cascade(label="View", menu=view_menu)
+        self.grid_var = tk.BooleanVar(value=True)
+        view_menu.add_checkbutton(label="Show Grid", variable=self.grid_var, command=self._toggle_grid)
+        view_menu.add_separator()
+        view_menu.add_command(label="Zoom In", command=self.canvas.zoom_in, accelerator="+")
+        view_menu.add_command(label="Zoom Out", command=self.canvas.zoom_out, accelerator="-")
 
     def _setup_keybindings(self):
         """Setup keyboard shortcuts."""
@@ -713,6 +750,10 @@ class App:
         self.root.bind("<Control-s>", lambda e: self._save_file())
         self.root.bind("<Control-o>", lambda e: self._open_file())
         self.root.bind("<Control-n>", lambda e: self._new_file())
+
+    def _toggle_grid(self):
+        self.show_grid = self.grid_var.get()
+        self.canvas.redraw()
 
     def _new_file(self):
         dialog = tk.Toplevel(self.root)
