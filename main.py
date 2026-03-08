@@ -8,6 +8,7 @@ from tkinter import ttk, colorchooser, filedialog, messagebox, simpledialog
 import os
 import json
 import math
+import struct
 
 try:
     from PIL import Image as PILImage, ImageTk as PILImageTk
@@ -255,38 +256,133 @@ class PaletteManager:
     def load_palette_file(self, filepath):
         ext = os.path.splitext(filepath)[1].lower()
         if ext == ".gpl":
-            self._load_gpl(filepath)
+            return self._load_gpl(filepath)
+        if ext == ".ase":
+            return self._load_ase(filepath)
         elif ext == ".pal":
-            self._load_pal(filepath)
-        else:
-            self._load_image_colors(filepath)
+            return self._load_pal(filepath)
+        if ext == ".png":
+            return self._load_image_colors(filepath)
+        raise ValueError("Unsupported palette format.")
 
     def _load_gpl(self, filepath):
-        self.colors = []
-        with open(filepath, 'r') as f:
-            in_colors = False
-            for line in f:
-                if line.strip() == "BEGIN PALETTE":
-                    in_colors = True
-                elif line.strip() == "END PALETTE":
-                    break
-                elif in_colors:
-                    parts = line.strip().split()
-                    if len(parts) >= 4:
-                        try:
-                            r, g, b = int(parts[0]), int(
-                                parts[1]), int(parts[2])
-                            self.colors.append(f"#{r:02X}{g:02X}{b:02X}")
-                        except ValueError:
-                            pass
-
-    def _load_pal(self, filepath):
-        self.colors = []
-        with open(filepath, 'r') as f:
+        colors = []
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 3:
+                    try:
+                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                    except ValueError:
+                        continue
+                    if all(0 <= channel <= 255 for channel in (r, g, b)):
+                        colors.append(f"#{r:02X}{g:02X}{b:02X}")
+        return self._set_colors(colors)
+
+    def _load_pal(self, filepath):
+        colors = []
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = [line.strip() for line in f if line.strip()]
+
+        if lines and lines[0].upper() == "JASC-PAL":
+            for line in lines[3:]:
+                parts = line.split()
+                if len(parts) >= 3:
+                    try:
+                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                    except ValueError:
+                        continue
+                    if all(0 <= channel <= 255 for channel in (r, g, b)):
+                        colors.append(f"#{r:02X}{g:02X}{b:02X}")
+        else:
+            for line in lines:
                 if line.startswith('#') and len(line) == 7:
-                    self.colors.append(line)
+                    colors.append(line.upper())
+                    continue
+                parts = line.replace(',', ' ').split()
+                if len(parts) >= 3:
+                    try:
+                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                    except ValueError:
+                        continue
+                    if all(0 <= channel <= 255 for channel in (r, g, b)):
+                        colors.append(f"#{r:02X}{g:02X}{b:02X}")
+
+        return self._set_colors(colors)
+
+    def _load_ase(self, filepath):
+        colors = []
+        with open(filepath, 'rb') as f:
+            if f.read(4) != b'ASEF':
+                raise ValueError("Invalid ASE file.")
+
+            f.read(4)  # version
+            block_count = struct.unpack('>I', f.read(4))[0]
+
+            for _ in range(block_count):
+                block_type_data = f.read(2)
+                if len(block_type_data) < 2:
+                    break
+
+                block_type = struct.unpack('>H', block_type_data)[0]
+                block_length = struct.unpack('>I', f.read(4))[0]
+                block_data = f.read(block_length)
+
+                if block_type != 0x0001:
+                    continue
+
+                color = self._parse_ase_color_block(block_data)
+                if color:
+                    colors.append(color)
+
+        return self._set_colors(colors)
+
+    def _parse_ase_color_block(self, block_data):
+        name_length = struct.unpack('>H', block_data[:2])[0]
+        name_end = 2 + name_length * 2
+        offset = name_end
+
+        color_model = block_data[offset:offset +
+                                 4].decode('ascii', errors='ignore').strip()
+        offset += 4
+
+        if color_model == 'RGB':
+            components = struct.unpack('>fff', block_data[offset:offset + 12])
+            r, g, b = [max(0, min(255, round(component * 255)))
+                       for component in components]
+            return f"#{r:02X}{g:02X}{b:02X}"
+
+        if color_model == 'GRAY':
+            value = struct.unpack('>f', block_data[offset:offset + 4])[0]
+            gray = max(0, min(255, round(value * 255)))
+            return f"#{gray:02X}{gray:02X}{gray:02X}"
+
+        if color_model == 'CMYK':
+            c, m, y, k = struct.unpack('>ffff', block_data[offset:offset + 16])
+            r = round(255 * (1 - c) * (1 - k))
+            g = round(255 * (1 - m) * (1 - k))
+            b = round(255 * (1 - y) * (1 - k))
+            return f"#{max(0, min(255, r)):02X}{max(0, min(255, g)):02X}{max(0, min(255, b)):02X}"
+
+        return None
+
+    def _set_colors(self, colors):
+        unique_colors = []
+        seen_colors = set()
+        for color in colors:
+            normalized = color.upper()
+            if normalized not in seen_colors:
+                seen_colors.add(normalized)
+                unique_colors.append(normalized)
+
+        if not unique_colors:
+            return False
+
+        self.colors = unique_colors[:256]
+        return True
 
     def _load_image_colors(self, filepath):
         if not PIL_AVAILABLE:
@@ -303,10 +399,7 @@ class PaletteManager:
                     unique_colors.append(color)
                 if len(unique_colors) >= 256:
                     break
-        if not unique_colors:
-            return False
-        self.colors = unique_colors
-        return True
+        return self._set_colors(unique_colors)
 
 
 class DrawingCanvas(tk.Canvas):
@@ -983,15 +1076,19 @@ class App:
             parent, text="Palette", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
         palette_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
+        palette_content = tk.Frame(palette_frame, bg=PANEL_COLOR)
+        palette_content.pack(fill=tk.BOTH, expand=True)
+
         self.palette_canvas = tk.Canvas(
-            palette_frame, bg=PANEL_COLOR, highlightthickness=0)
+            palette_content, bg=PANEL_COLOR, highlightthickness=0)
         self.palette_scrollbar = tk.Scrollbar(
-            palette_frame, orient=tk.VERTICAL, command=self.palette_canvas.yview)
+            palette_content, orient=tk.VERTICAL, command=self.palette_canvas.yview)
         self.palette_canvas.configure(
             yscrollcommand=self.palette_scrollbar.set)
 
         self.palette_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.palette_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.palette_canvas.pack(
+            side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0))
 
         self.palette_inner = tk.Frame(self.palette_canvas, bg=PANEL_COLOR)
         self.palette_canvas.create_window(
@@ -1001,9 +1098,7 @@ class App:
             scrollregion=self.palette_canvas.bbox("all")))
 
         tk.Button(palette_frame, text="Load Palette", bg=PANEL_COLOR,
-                  fg=TEXT_COLOR, command=self._load_palette).pack(fill=tk.X, pady=(2, 2))
-        tk.Button(palette_frame, text="Import Palette", bg=PANEL_COLOR,
-                  fg=TEXT_COLOR, command=self._import_palette).pack(fill=tk.X)
+                  fg=TEXT_COLOR, command=self._load_palette).pack(fill=tk.X, pady=(6, 0))
 
         self._update_palette()
 
@@ -1199,34 +1294,18 @@ class App:
     def _load_palette(self):
         filepath = filedialog.askopenfilename(
             title="Load Palette",
-            filetypes=[("Palette Files", "*.gpl *.pal *.png"),
+            filetypes=[("Palette Files", "*.pal *.gpl *.ase *.png"),
                        ("All Files", "*.*")]
         )
         if filepath:
-            self.palette_manager.load_palette_file(filepath)
-            self._update_palette()
-
-    def _import_palette(self):
-        if not PIL_AVAILABLE:
-            messagebox.showerror("Error", "PIL not available")
-            return
-
-        filepath = filedialog.askopenfilename(
-            title="Import Palette from Image",
-            filetypes=[
-                ("Image Files", "*.png *.jpg *.jpeg *.bmp *.gif *.webp"), ("All Files", "*.*")]
-        )
-        if not filepath:
-            return
-
-        try:
-            if not self.palette_manager._load_image_colors(filepath):
-                messagebox.showwarning(
-                    "Import Palette", "No visible colors were found in the selected image.")
-                return
-            self._update_palette()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to import palette: {e}")
+            try:
+                if not self.palette_manager.load_palette_file(filepath):
+                    messagebox.showwarning(
+                        "Load Palette", "No colors were found in the selected palette file.")
+                    return
+                self._update_palette()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load palette: {e}")
 
     def _select_tool(self, tool):
         self.tool_manager.set_tool(tool)
@@ -1472,7 +1551,9 @@ class App:
     def _load_empty_canvas(self, width, height):
         history = HistoryManager(20)
         layer_manager = LayerManager(width, height, history)
+        self.palette_manager.colors = DEFAULT_PALETTE[:]
         self._apply_document_state(layer_manager, history)
+        self._update_palette()
         self.current_file = None
 
     def _request_view_reset(self):
