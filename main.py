@@ -558,11 +558,39 @@ class App:
         self.background = "#FFFFFF"
         self.show_grid = True
 
+        self._load_icons()
         self._setup_ui()
         self._setup_menu()
         self._setup_keybindings()
 
         self.canvas_frame.bind("<Configure>", lambda e: self.canvas.redraw())
+
+    def _load_icons(self):
+        self.icons = {}
+        icon_files = {
+            "pencil": "icons/pencil.png",
+            "eraser": "icons/eraser.png",
+            "bucket": "icons/fill-bucket.png",
+            "eyedropper": "icons/eyedropper.png",
+            "selection": "icons/bounding-box.png",
+            "eye_on": "icons/eye-on.png",
+            "eye_off": "icons/eye-off.png",
+            "trash": "icons/trash.png"
+        }
+        for key, path in icon_files.items():
+            try:
+                if PILImage:
+                    img = PILImage.open(path).convert("RGBA")
+                    img = img.resize((20, 20), PILImage.LANCZOS)
+                    self.icons[key] = tk.PhotoImage(data=self._pil_to_tk(img))
+            except Exception:
+                pass
+
+    def _pil_to_tk(self, pil_image):
+        import io
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
     def _setup_ui(self):
         """Setup the main UI layout."""
@@ -594,11 +622,11 @@ class App:
     def _setup_toolbar(self, parent):
         """Setup the tool toolbar."""
         tools = [
-            ("D", "pencil", "Pencil (P)"),
-            ("E", "eraser", "Eraser (E)"),
-            ("B", "bucket", "Bucket Fill (B)"),
-            ("I", "eyedropper", "Eyedropper (I)"),
-            ("S", "selection", "Selection (S)")
+            ("pencil", "pencil", "Pencil (P)"),
+            ("eraser", "eraser", "Eraser (E)"),
+            ("bucket", "bucket", "Bucket Fill (B)"),
+            ("eyedropper", "eyedropper", "Eyedropper (I)"),
+            ("selection", "selection", "Selection (S)")
         ]
 
         self.tool_buttons = {}
@@ -620,13 +648,18 @@ class App:
                 self.tooltip_window.destroy()
                 self.tooltip_window = None
         
-        for label, tool_id, tooltip in tools:
+        for icon_key, tool_id, tooltip in tools:
+            icon = self.icons.get(icon_key)
             btn = tk.Button(
-                parent, text=label, bg=PANEL_COLOR, fg=TEXT_COLOR,
-                activebackground=ACCENT_COLOR, activeforeground=TEXT_COLOR,
-                relief=tk.FLAT, width=4, height=2, font=("Arial", 11, "bold"),
+                parent, image=icon, bg=PANEL_COLOR,
+                activebackground=ACCENT_COLOR,
+                relief=tk.FLAT, width=28, height=28,
                 command=lambda t=tool_id: self._select_tool(t)
             )
+            if icon:
+                btn.config(image=icon)
+            else:
+                btn.config(text=icon_key[0].upper(), font=("Arial", 11, "bold"))
             btn.pack(pady=2, padx=2)
             btn.bind("<Enter>", lambda e, w=btn, t=tooltip: show_tooltip(w, t, e))
             btn.bind("<Leave>", hide_tooltip)
@@ -690,7 +723,10 @@ class App:
         add_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(add_btn, "Add Layer")
         
-        del_btn = tk.Button(btn_frame, text="-", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._delete_layer)
+        trash_icon = self.icons.get("trash")
+        del_btn = tk.Button(btn_frame, image=trash_icon, width=20, height=18, bg=PANEL_COLOR, relief=tk.FLAT, command=self._delete_layer)
+        if not trash_icon:
+            del_btn.config(text="-", width=3, fg=TEXT_COLOR)
         del_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(del_btn, "Delete Layer")
         
@@ -784,12 +820,16 @@ class App:
             row_frame = tk.Frame(self.layer_inner, bg=bg_color, pady=1)
             row_frame.pack(fill=tk.X)
             
-            eye_text = "O" if layer.visible else "x"
+            eye_icon = self.icons.get("eye_on" if layer.visible else "eye_off")
             eye_btn = tk.Button(
-                row_frame, text=eye_text, width=2, bg=bg_color, fg=TEXT_COLOR,
-                relief=tk.FLAT, font=("Arial", 9, "bold"),
+                row_frame, image=eye_icon, width=18, height=18, bg=bg_color,
+                relief=tk.FLAT,
                 command=lambda idx=i: self._toggle_layer_visibility_by_index(idx)
             )
+            if eye_icon:
+                eye_btn.config(image=eye_icon)
+            else:
+                eye_btn.config(text="O" if layer.visible else "x")
             eye_btn.pack(side=tk.LEFT, padx=(2, 5))
             
             name_label = tk.Label(
