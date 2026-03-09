@@ -41,65 +41,22 @@ If your system uses the Python launcher instead of `python`, use:
 py main.py
 ```
 
-## Build Scripts
+## Build
 
-This repo includes a Windows PowerShell build script at [build.ps1](build.ps1) and a Linux Bash build script at [build-linux.sh](build-linux.sh).
-
-They do the following:
-
-- Installs the runtime dependency from [requirements.txt](requirements.txt).
-- Installs PyInstaller if needed.
-- Builds a single-file packaged app for the current platform.
-- Embeds [icon.ico](icon.ico) as the Windows `.exe` icon.
-- Bundles the `icons` folder and `icon.ico` so the packaged app can use the same assets at runtime.
-
-Run the Windows build script from PowerShell:
+Windows:
 
 ```powershell
 .\build.ps1
 ```
 
-To remove old Windows build output first:
-
-```powershell
-.\build.ps1 -Clean
-```
-
-The generated Windows executable will be written to:
-
-```text
-dist\SpriteLite.exe
-```
-
-Run the Linux build script from a shell:
+Linux:
 
 ```bash
 ./build-linux.sh
 ```
 
-To remove old Linux build output first:
+## Download
 
-```bash
-./build-linux.sh --clean
-```
+Download the latest built version from the releases page:
 
-The generated Linux binary will be written to:
-
-```text
-dist/SpriteLite
-```
-
-## Export Pipeline
-
-The `.exe` export flow is intentionally simple:
-
-1. Start from the repo root.
-2. Run [build.ps1](build.ps1).
-3. The script installs dependencies and invokes PyInstaller.
-4. PyInstaller packages [main.py](main.py), the toolbar icons in [icons](icons), and [icon.ico](icon.ico).
-5. The finished executable is created at `dist\SpriteLite.exe`.
-
-There are two separate icon steps in that pipeline:
-
-- The window title-bar icon inside the running app is set by the Tkinter app code.
-- The file icon shown for `SpriteLite.exe` in Windows Explorer is set by PyInstaller using [icon.ico](icon.ico).
+https://github.com/elevchyt/spritelite/releases
