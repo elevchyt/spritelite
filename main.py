@@ -10,6 +10,12 @@ import json
 import math
 import struct
 import sys
+import webbrowser
+
+try:
+    import ctypes
+except ImportError:
+    ctypes = None
 
 try:
     from PIL import Image as PILImage, ImageTk as PILImageTk
@@ -37,6 +43,10 @@ ACCENT_COLOR = "#007acc"
 
 ZOOM_LEVELS = [1, 2, 4, 8, 16]
 DEFAULT_ZOOM = ZOOM_LEVELS[-1]
+
+APP_VERSION = "1.0"
+GITHUB_REPO_URL = "https://github.com/elevchyt/spritelite"
+APP_DEVELOPER = "Eleftherios Hytiroglou"
 
 # Endesga 32
 DEFAULT_PALETTE = [
@@ -446,7 +456,8 @@ class DrawingCanvas(tk.Canvas):
         self.bind("<Button-2>", self.on_middle_click)
         self.bind("<B2-Motion>", self.on_middle_drag)
         self.bind("<ButtonRelease-2>", self.on_middle_release)
-        self.bind("<Enter>", lambda e: self.focus_set())
+        self.bind("<Enter>", self.on_enter)
+        self.bind("<Motion>", self.on_motion)
 
         self.bind("<space>", lambda e: self._start_pan(e))
         self.bind("<KeyRelease-space>", self._end_pan)
@@ -468,6 +479,32 @@ class DrawingCanvas(tk.Canvas):
 
     def _ctrl_pressed(self, event):
         return bool(event.state & 0x0004)
+
+    def _eyedropper_active(self, event=None):
+        if self.app is None:
+            return False
+        return self.app.is_alt_eyedropper_active(event)
+
+    def _sample_color(self, x, y, target):
+        layer = self.layer_manager.get_active_layer()
+        color = layer.get_pixel(x, y)
+        if color[3] == 0:
+            return
+
+        color_hex = f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}"
+        if target == "background":
+            self.app.set_background_color(color_hex)
+        else:
+            self.app.set_foreground_color(color_hex)
+
+    def on_enter(self, event):
+        self.focus_set()
+        if self.app is not None:
+            self.app.sync_alt_eyedropper_state()
+
+    def on_motion(self, event):
+        if self.app is not None:
+            self.app.sync_alt_eyedropper_state()
 
     def _point_in_selection(self, x, y):
         selection = self.tool_manager.selection
@@ -695,6 +732,10 @@ class DrawingCanvas(tk.Canvas):
             return
 
         cx, cy = self.screen_to_canvas(event.x, event.y)
+        if self._eyedropper_active(event):
+            self._sample_color(cx, cy, "foreground")
+            return
+
         tool = self.tool_manager.current_tool
 
         if tool == "selection":
@@ -780,13 +821,13 @@ class DrawingCanvas(tk.Canvas):
 
     def on_right_click(self, event):
         cx, cy = self.screen_to_canvas(event.x, event.y)
+        if self._eyedropper_active(event):
+            self._sample_color(cx, cy, "background")
+            return
+
         tool = self.tool_manager.current_tool
         if tool == "eyedropper":
-            layer = self.layer_manager.get_active_layer()
-            color = layer.get_pixel(cx, cy)
-            if color[3] > 0:
-                self.app.set_background_color(
-                    f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}")
+            self._sample_color(cx, cy, "background")
 
     def on_right_drag(self, event):
         pass
@@ -820,10 +861,7 @@ class DrawingCanvas(tk.Canvas):
                 self.redraw()
 
         elif tool == "eyedropper":
-            color = layer.get_pixel(cx, cy)
-            if color[3] > 0:
-                app.set_foreground_color(
-                    f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}")
+            self._sample_color(cx, cy, "foreground")
 
     def _bucket_fill(self, layer, start_x, start_y, fill_color):
         w, h = layer.width, layer.height
@@ -1026,6 +1064,8 @@ class App:
         self._pending_view_reset = True
         self._pending_layer_select_job = None
         self._last_canvas_size = None
+        self.alt_eyedropper_active = False
+        self._alt_poll_job = None
 
         self._load_icons()
         self._setup_ui()
@@ -1174,15 +1214,19 @@ class App:
         "pencil": "crosshair",
         "eraser": "crosshair",
         "bucket": "crosshair",
-        "eyedropper": "crosshair",
-        "eyedropper": "crosshair",
+        "eyedropper": "target",
         "selection": "crosshair"
     }
 
     def _set_cursor(self, tool):
-        cursor = self.CURSORS.get(tool, "arrow")
         if hasattr(self, 'canvas'):
-            self.canvas.configure(cursor=cursor)
+            cursor = self.CURSORS.get(tool, "arrow")
+            if self.alt_eyedropper_active:
+                cursor = self.CURSORS["eyedropper"]
+            try:
+                self.canvas.configure(cursor=cursor)
+            except tk.TclError:
+                self.canvas.configure(cursor="crosshair")
 
     def _setup_layer_panel(self, parent):
         """Setup the layer panel."""
@@ -1569,6 +1613,11 @@ class App:
         view_menu.add_command(
             label="Zoom Out", command=self.canvas.zoom_out, accelerator="Ctrl+-")
 
+        help_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="GitHub", command=self._open_github_repo)
+        help_menu.add_command(label="About", command=self._show_about_dialog)
+
     def _setup_keybindings(self):
         """Setup keyboard shortcuts."""
         self.root.bind("<p>", lambda e: self._select_tool("pencil"))
@@ -1604,6 +1653,55 @@ class App:
         self.root.bind("<Right>", lambda e: self._pan_canvas_by_keys(-1, 0))
         self.root.bind("<Up>", lambda e: self._pan_canvas_by_keys(0, 1))
         self.root.bind("<Down>", lambda e: self._pan_canvas_by_keys(0, -1))
+        self.root.bind_all("<KeyPress-Alt_L>", self._on_alt_press, add="+")
+        self.root.bind_all("<KeyPress-Alt_R>", self._on_alt_press, add="+")
+        self.root.bind_all("<KeyRelease-Alt_L>", self._on_alt_release, add="+")
+        self.root.bind_all("<KeyRelease-Alt_R>", self._on_alt_release, add="+")
+        self.root.bind("<FocusOut>", self._on_focus_out)
+
+    def is_alt_eyedropper_active(self, event=None):
+        return self.alt_eyedropper_active
+
+    def _system_alt_pressed(self):
+        if sys.platform.startswith("win") and ctypes is not None:
+            return bool(ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000)
+        return self.alt_eyedropper_active
+
+    def _set_alt_eyedropper_active(self, active):
+        if self.alt_eyedropper_active == active:
+            return
+        self.alt_eyedropper_active = active
+        self._set_cursor(self.tool_manager.current_tool)
+
+    def sync_alt_eyedropper_state(self):
+        self._set_alt_eyedropper_active(self._system_alt_pressed())
+
+    def _schedule_alt_state_poll(self):
+        if self._alt_poll_job is not None:
+            self.root.after_cancel(self._alt_poll_job)
+        self._alt_poll_job = self.root.after(50, self._poll_alt_state)
+
+    def _poll_alt_state(self):
+        self._alt_poll_job = None
+        self.sync_alt_eyedropper_state()
+        if self.alt_eyedropper_active:
+            self._schedule_alt_state_poll()
+
+    def _on_alt_press(self, event=None):
+        self._set_alt_eyedropper_active(True)
+        self._schedule_alt_state_poll()
+
+    def _on_alt_release(self, event=None):
+        self._set_alt_eyedropper_active(False)
+        if self._alt_poll_job is not None:
+            self.root.after_cancel(self._alt_poll_job)
+            self._alt_poll_job = None
+
+    def _on_focus_out(self, event=None):
+        self._set_alt_eyedropper_active(False)
+        if self._alt_poll_job is not None:
+            self.root.after_cancel(self._alt_poll_job)
+            self._alt_poll_job = None
 
     def _select_all(self):
         self.tool_manager.set_tool("selection")
@@ -1621,6 +1719,16 @@ class App:
         self.show_grid = not self.show_grid
         self.grid_var.set(self.show_grid)
         self.canvas.redraw()
+
+    def _open_github_repo(self):
+        webbrowser.open_new_tab(GITHUB_REPO_URL)
+
+    def _show_about_dialog(self):
+        messagebox.showinfo(
+            "About SpriteLite",
+            f"SpriteLite\nVersion: {APP_VERSION}\nCreated by: {APP_DEVELOPER}",
+            parent=self.root,
+        )
 
     def _clear_selection(self, event=None):
         self.canvas.clear_selection()

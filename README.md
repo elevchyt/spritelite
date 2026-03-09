@@ -41,34 +41,52 @@ If your system uses the Python launcher instead of `python`, use:
 py main.py
 ```
 
-## Build Script
+## Build Scripts
 
-This repo includes a Windows PowerShell build script at [build.ps1](build.ps1).
+This repo includes a Windows PowerShell build script at [build.ps1](build.ps1) and a Linux Bash build script at [build-linux.sh](build-linux.sh).
 
-It does the following:
+They do the following:
 
 - Installs the runtime dependency from [requirements.txt](requirements.txt).
 - Installs PyInstaller if needed.
-- Builds a single-file Windows executable.
-- Embeds [icon.ico](icon.ico) as the `.exe` icon.
+- Builds a single-file packaged app for the current platform.
+- Embeds [icon.ico](icon.ico) as the Windows `.exe` icon.
 - Bundles the `icons` folder and `icon.ico` so the packaged app can use the same assets at runtime.
 
-Run the build script from PowerShell:
+Run the Windows build script from PowerShell:
 
 ```powershell
 .\build.ps1
 ```
 
-To remove old build output first:
+To remove old Windows build output first:
 
 ```powershell
 .\build.ps1 -Clean
 ```
 
-The generated executable will be written to:
+The generated Windows executable will be written to:
 
 ```text
 dist\SpriteLite.exe
+```
+
+Run the Linux build script from a shell:
+
+```bash
+./build-linux.sh
+```
+
+To remove old Linux build output first:
+
+```bash
+./build-linux.sh --clean
+```
+
+The generated Linux binary will be written to:
+
+```text
+dist/SpriteLite
 ```
 
 ## Export Pipeline
