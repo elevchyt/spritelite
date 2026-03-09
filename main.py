@@ -9,6 +9,7 @@ import os
 import json
 import math
 import struct
+import sys
 
 try:
     from PIL import Image as PILImage, ImageTk as PILImageTk
@@ -48,6 +49,15 @@ DEFAULT_PALETTE = [
     "#262B44", "#181425", "#FF0044", "#68386C",
     "#B55088", "#F6757A", "#E8B796", "#C28569"
 ]
+
+
+def resource_path(relative_path):
+    """Resolve asset paths for both source runs and bundled executables."""
+    if hasattr(sys, "_MEIPASS"):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
 
 
 class HistoryManager:
@@ -998,6 +1008,7 @@ class App:
         self.root.title("SpriteLite")
         self.root.geometry("1024x768")
         self.root.configure(bg=BG_COLOR)
+        self._apply_window_icon()
 
         self.width = 16
         self.height = 16
@@ -1022,6 +1033,16 @@ class App:
         self._setup_keybindings()
         self.root.after_idle(self._request_view_reset)
 
+    def _apply_window_icon(self):
+        icon_path = resource_path("icon.ico")
+        if not os.path.exists(icon_path):
+            return
+
+        try:
+            self.root.iconbitmap(icon_path)
+        except Exception:
+            pass
+
     def _load_icons(self):
         self.icons = {}
         icon_files = {
@@ -1037,7 +1058,7 @@ class App:
         for key, path in icon_files.items():
             try:
                 if PILImage:
-                    img = PILImage.open(path).convert("RGBA")
+                    img = PILImage.open(resource_path(path)).convert("RGBA")
                     img = img.resize((20, 20), PILImage.LANCZOS)
                     self.icons[key] = tk.PhotoImage(data=self._pil_to_tk(img))
             except Exception:
