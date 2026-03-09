@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$distExe = Join-Path $projectRoot "dist\SpriteLite.exe"
 Set-Location $projectRoot
 
 function Get-PythonLauncher {
@@ -44,4 +45,8 @@ Write-Host "Building SpriteLite.exe..." -ForegroundColor Cyan
     --add-data "icon.ico;." `
     main.py
 
-Write-Host "Build complete: dist\SpriteLite.exe" -ForegroundColor Green
+if (-not (Test-Path $distExe)) {
+    throw "Build finished but the executable was not found at $distExe"
+}
+
+Write-Host "Build complete: $distExe" -ForegroundColor Green

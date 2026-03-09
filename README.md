@@ -13,7 +13,10 @@ SpriteLite is a simple, lightweight pixel editor built with Tkinter and designed
 - Layer-based editing with visibility toggles, duplication, renaming, and ordering.
 - PNG import/export and `.sprlite` project save/load support.
 - Zoom, pan, grid display, undo/redo, and palette loading.
-- Runtime app icon support and `.exe` export support using the included [icon.ico](icon.ico).
+
+## Project Goal
+
+SpriteLite is meant to stay small, direct, and fast. The emphasis is not on a huge feature surface, but on making a pixel editor that starts quickly, runs well on older hardware, and stays focused on the core editing workflow.
 
 ## Requirements
 
@@ -82,7 +85,3 @@ There are two separate icon steps in that pipeline:
 
 - The window title-bar icon inside the running app is set by the Tkinter app code.
 - The file icon shown for `SpriteLite.exe` in Windows Explorer is set by PyInstaller using [icon.ico](icon.ico).
-
-## Project Goal
-
-SpriteLite is meant to stay small, direct, and fast. The emphasis is not on a huge feature surface, but on making a pixel editor that starts quickly, runs well on older hardware, and stays focused on the core editing workflow.
