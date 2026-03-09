@@ -6,6 +6,11 @@
 
 SpriteLite is a simple, lightweight pixel editor built with Tkinter and designed with performance in mind for older machines. The goal is to keep the editor responsive, compact, and easy to use while still covering the core workflow needed for sprite work and small pixel art projects.
 
+<!-- preview image -->
+<p align="center">
+  <img src="preview.png" alt="SpriteLite preview" width="600">
+</p>
+
 ## Features
 
 - Lightweight single-file desktop app built around Tkinter.
