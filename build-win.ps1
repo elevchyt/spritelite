@@ -3,7 +3,13 @@ param(
     # target architecture: 32, 64, or both. PyInstaller cannot cross-compile,
     # so each build requires a matching Python interpreter to be installed.
     [ValidateSet('32','64','both')]
-    [string]$Arch = 'both'
+    [string]$Arch = 'both',
+    # Use an explicit Python version per architecture so the 32-bit build can
+    # target older systems like Windows 7. Python 3.9+ does not support
+    # Windows 7, so the default 32-bit runtime stays on Python 3.8.
+    [string]$PythonVersion64 = '3.11',
+    [string]$PythonVersion32 = '3.8',
+    [string]$PyInstallerVersion32 = '4.10'
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,15 +24,17 @@ function Get-PythonLauncher {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet('32','64')]
-        [string]$TargetArch
+        [string]$TargetArch,
+        [Parameter(Mandatory = $true)]
+        [string]$PythonVersion
     )
 
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @("py", "-3-$TargetArch")
+        return @("py", "-$PythonVersion-$TargetArch")
     }
 
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        Write-Warning "Could not locate the py launcher; ensure PATH points to a $TargetArch-bit interpreter."
+        Write-Warning "Could not locate the py launcher; ensure PATH points to a $TargetArch-bit Python $PythonVersion interpreter."
         return @("python")
     }
 
@@ -62,11 +70,13 @@ function Invoke-Build {
         [string]$TargetArch
     )
 
-    $pythonLauncher = Get-PythonLauncher -TargetArch $TargetArch
+    $pythonVersion = if ($TargetArch -eq '32') { $PythonVersion32 } else { $PythonVersion64 }
+    $pyInstallerPackage = if ($TargetArch -eq '32') { "pyinstaller==$PyInstallerVersion32" } else { 'pyinstaller' }
+    $pythonLauncher = Get-PythonLauncher -TargetArch $TargetArch -PythonVersion $pythonVersion
     $detectedArch = Get-PythonBitness -Launcher $pythonLauncher
 
     if ($detectedArch -ne $TargetArch) {
-        throw "Requested a $TargetArch-bit build, but the selected Python interpreter reports $detectedArch-bit. Install the matching interpreter or use the py launcher."
+        throw "Requested a $TargetArch-bit build, but the selected Python interpreter reports $detectedArch-bit. Install Python $pythonVersion ($TargetArch-bit) or use the py launcher."
     }
 
     $exeName = if ($TargetArch -eq '32') { 'SpriteLite-win32' } else { 'SpriteLite' }
@@ -75,18 +85,18 @@ function Invoke-Build {
     $specDir = Join-Path $projectRoot "build\spec\win$TargetArch"
     $distExe = Join-Path $distDir "$exeName.exe"
 
-    Write-Host "Installing build dependencies for $TargetArch-bit Python..." -ForegroundColor Cyan
+    Write-Host "Installing build dependencies for Python $pythonVersion ($TargetArch-bit)..." -ForegroundColor Cyan
     $pipArgs = @()
     if ($pythonLauncher.Length -gt 1) {
         $pipArgs += $pythonLauncher[1..($pythonLauncher.Length - 1)]
     }
-    $pipArgs += @("-m", "pip", "install", "-r", "requirements.txt", "pyinstaller")
+    $pipArgs += @("-m", "pip", "install", "-r", "requirements.txt", $pyInstallerPackage)
     & $pythonLauncher[0] @pipArgs
     if ($LASTEXITCODE -ne 0) {
         throw "pip install failed for the $TargetArch-bit build with exit code $LASTEXITCODE"
     }
 
-    Write-Host "Building SpriteLite.exe for $TargetArch-bit Windows..." -ForegroundColor Cyan
+    Write-Host "Building SpriteLite.exe for $TargetArch-bit Windows with Python $pythonVersion and $pyInstallerPackage..." -ForegroundColor Cyan
     $pyInstallerArgs = @()
     if ($pythonLauncher.Length -gt 1) {
         $pyInstallerArgs += $pythonLauncher[1..($pythonLauncher.Length - 1)]

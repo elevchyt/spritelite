@@ -57,6 +57,12 @@ Build both Windows variants in separate output folders:
 
 This writes the executables to `dist\win64\SpriteLite.exe` and `dist\win32\SpriteLite-win32.exe`.
 Each build still requires the matching Python interpreter to be installed locally because PyInstaller cannot cross-compile.
+The default 32-bit build targets Windows 7 compatibility by using Python 3.8 x86 together with PyInstaller 4.10; newer Python 3.9+ 32-bit runtimes and newer PyInstaller bootloaders are more likely to fail on Windows 7.
+
+Windows 7 note:
+The 32-bit executable requires Windows 7 SP1 plus the Universal CRT update (KB2999226).
+Python 3.8 on Windows 7 may also require KB2533623.
+If the target machine reports missing `api-ms-win-crt-*` DLLs or cannot load `python38.dll`, install those updates and the Visual C++ x86 runtime.
 
 Linux:
 
