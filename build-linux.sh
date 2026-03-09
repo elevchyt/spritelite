@@ -44,6 +44,7 @@ printf '%s\n' "Building SpriteLite Linux binary..."
     --name SpriteLite \
     --add-data "icons:icons" \
     --add-data "icon.ico:." \
+    --hidden-import PIL._tkinter_finder \
     main.py
 
 if [[ ! -f "$dist_binary" ]]; then
