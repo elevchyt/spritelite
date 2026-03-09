@@ -46,8 +46,17 @@ py main.py
 Windows:
 
 ```powershell
-.\build.ps1
+.\build-win.ps1
 ```
+
+Build both Windows variants in separate output folders:
+
+```powershell
+.\build-win.ps1 -Arch both
+```
+
+This writes the executables to `dist\win64\SpriteLite.exe` and `dist\win32\SpriteLite-win32.exe`.
+Each build still requires the matching Python interpreter to be installed locally because PyInstaller cannot cross-compile.
 
 Linux:
 
