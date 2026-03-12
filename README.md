@@ -80,3 +80,8 @@ Linux:
 Download the latest built version from the releases page:
 
 https://github.com/elevchyt/spritelite/releases
+
+---
+
+**License:** SpriteLite is released under the [GNU General Public License v3](LICENSE).  
+See the `LICENSE` file for details.

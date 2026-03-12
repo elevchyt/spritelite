@@ -3,6 +3,8 @@ SpriteLite - A lightweight pixel art editor
 Single entry point for the application
 """
 
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import tkinter as tk
 from tkinter import ttk, colorchooser, filedialog, messagebox, simpledialog
 import os
