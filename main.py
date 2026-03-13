@@ -21,6 +21,7 @@ except ImportError:
 
 try:
     from PIL import Image as PILImage, ImageTk as PILImageTk
+
     PIL_AVAILABLE = True
     PILImage  # Prevent unused import warning
     PILImageTk  # Prevent unused import warning
@@ -30,8 +31,11 @@ except ImportError:
     PIL_AVAILABLE = False
 
 if PIL_AVAILABLE:
-    IMAGE_NEAREST = PILImage.Resampling.NEAREST if hasattr(
-        PILImage, "Resampling") else PILImage.NEAREST
+    IMAGE_NEAREST = (
+        PILImage.Resampling.NEAREST
+        if hasattr(PILImage, "Resampling")
+        else PILImage.NEAREST
+    )
 else:
     IMAGE_NEAREST = None
 
@@ -52,14 +56,38 @@ APP_DEVELOPER = "Eleftherios Hytiroglou"
 
 # Endesga 32
 DEFAULT_PALETTE = [
-    "#BE4A2F", "#D77643", "#EAD4AA", "#E4A672",
-    "#B86F50", "#733E39", "#3E2731", "#A22633",
-    "#E43B44", "#F77622", "#FEAE34", "#FEE761",
-    "#63C74D", "#3E8948", "#265C42", "#193C3E",
-    "#124E89", "#0099DB", "#2CE8F5", "#FFFFFF",
-    "#C0CBDC", "#8B9BB4", "#5A6988", "#3A4466",
-    "#262B44", "#181425", "#FF0044", "#68386C",
-    "#B55088", "#F6757A", "#E8B796", "#C28569"
+    "#BE4A2F",
+    "#D77643",
+    "#EAD4AA",
+    "#E4A672",
+    "#B86F50",
+    "#733E39",
+    "#3E2731",
+    "#A22633",
+    "#E43B44",
+    "#F77622",
+    "#FEAE34",
+    "#FEE761",
+    "#63C74D",
+    "#3E8948",
+    "#265C42",
+    "#193C3E",
+    "#124E89",
+    "#0099DB",
+    "#2CE8F5",
+    "#FFFFFF",
+    "#C0CBDC",
+    "#8B9BB4",
+    "#5A6988",
+    "#3A4466",
+    "#262B44",
+    "#181425",
+    "#FF0044",
+    "#68386C",
+    "#B55088",
+    "#F6757A",
+    "#E8B796",
+    "#C28569",
 ]
 
 
@@ -92,8 +120,7 @@ class HistoryManager:
         if not self.undo_stack:
             return None
         layer_index, pixel_data = self.undo_stack.pop()
-        self.redo_stack.append(
-            (layer_index, bytearray(layers[layer_index].pixels)))
+        self.redo_stack.append((layer_index, bytearray(layers[layer_index].pixels)))
         return layer_index, pixel_data
 
     def redo(self, layers):
@@ -101,8 +128,7 @@ class HistoryManager:
         if not self.redo_stack:
             return None
         layer_index, pixel_data = self.redo_stack.pop()
-        self.undo_stack.append(
-            (layer_index, bytearray(layers[layer_index].pixels)))
+        self.undo_stack.append((layer_index, bytearray(layers[layer_index].pixels)))
         return layer_index, pixel_data
 
     def can_undo(self):
@@ -124,12 +150,12 @@ class Layer:
 
     def get_pixel(self, x, y):
         idx = (y * self.width + x) * 4
-        return bytes(self.pixels[idx:idx + 4])
+        return bytes(self.pixels[idx : idx + 4])
 
     def set_pixel(self, x, y, color):
         if 0 <= x < self.width and 0 <= y < self.height:
             idx = (y * self.width + x) * 4
-            self.pixels[idx:idx + 4] = color
+            self.pixels[idx : idx + 4] = color
 
     def clear(self):
         self.pixels = bytearray(self.width * self.height * 4)
@@ -163,8 +189,7 @@ class LayerManager:
         return self.layers[self.active_layer_index]
 
     def add_layer(self):
-        new_layer = Layer(
-            f"Layer {len(self.layers) + 1}", self.width, self.height)
+        new_layer = Layer(f"Layer {len(self.layers) + 1}", self.width, self.height)
         self.layers.append(new_layer)
         self.active_layer_index = len(self.layers) - 1
         self.mark_dirty()
@@ -197,9 +222,13 @@ class LayerManager:
 
     def move_layer_up(self):
         if self.active_layer_index < len(self.layers) - 1:
-            self.layers[self.active_layer_index], self.layers[self.active_layer_index + 1] = \
-                self.layers[self.active_layer_index +
-                            1], self.layers[self.active_layer_index]
+            (
+                self.layers[self.active_layer_index],
+                self.layers[self.active_layer_index + 1],
+            ) = (
+                self.layers[self.active_layer_index + 1],
+                self.layers[self.active_layer_index],
+            )
             self.active_layer_index += 1
             self.mark_dirty()
             return True
@@ -207,9 +236,13 @@ class LayerManager:
 
     def move_layer_down(self):
         if self.active_layer_index > 0:
-            self.layers[self.active_layer_index], self.layers[self.active_layer_index - 1] = \
-                self.layers[self.active_layer_index -
-                            1], self.layers[self.active_layer_index]
+            (
+                self.layers[self.active_layer_index],
+                self.layers[self.active_layer_index - 1],
+            ) = (
+                self.layers[self.active_layer_index - 1],
+                self.layers[self.active_layer_index],
+            )
             self.active_layer_index -= 1
             self.mark_dirty()
             return True
@@ -243,7 +276,8 @@ class LayerManager:
             self.render_composite()
         if self._composite_image_cache is None:
             self._composite_image_cache = PILImage.frombytes(
-                "RGBA", (self.width, self.height), self._composite_cache)
+                "RGBA", (self.width, self.height), self._composite_cache
+            )
         return self._composite_image_cache
 
 
@@ -297,7 +331,7 @@ class PaletteManager:
 
     def _load_gpl(self, filepath):
         colors = []
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
@@ -314,7 +348,7 @@ class PaletteManager:
 
     def _load_pal(self, filepath):
         colors = []
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             lines = [line.strip() for line in f if line.strip()]
 
         if lines and lines[0].upper() == "JASC-PAL":
@@ -329,10 +363,10 @@ class PaletteManager:
                         colors.append(f"#{r:02X}{g:02X}{b:02X}")
         else:
             for line in lines:
-                if line.startswith('#') and len(line) == 7:
+                if line.startswith("#") and len(line) == 7:
                     colors.append(line.upper())
                     continue
-                parts = line.replace(',', ' ').split()
+                parts = line.replace(",", " ").split()
                 if len(parts) >= 3:
                     try:
                         r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
@@ -345,20 +379,20 @@ class PaletteManager:
 
     def _load_ase(self, filepath):
         colors = []
-        with open(filepath, 'rb') as f:
-            if f.read(4) != b'ASEF':
+        with open(filepath, "rb") as f:
+            if f.read(4) != b"ASEF":
                 raise ValueError("Invalid ASE file.")
 
             f.read(4)  # version
-            block_count = struct.unpack('>I', f.read(4))[0]
+            block_count = struct.unpack(">I", f.read(4))[0]
 
             for _ in range(block_count):
                 block_type_data = f.read(2)
                 if len(block_type_data) < 2:
                     break
 
-                block_type = struct.unpack('>H', block_type_data)[0]
-                block_length = struct.unpack('>I', f.read(4))[0]
+                block_type = struct.unpack(">H", block_type_data)[0]
+                block_length = struct.unpack(">I", f.read(4))[0]
                 block_data = f.read(block_length)
 
                 if block_type != 0x0001:
@@ -371,27 +405,29 @@ class PaletteManager:
         return self._set_colors(colors)
 
     def _parse_ase_color_block(self, block_data):
-        name_length = struct.unpack('>H', block_data[:2])[0]
+        name_length = struct.unpack(">H", block_data[:2])[0]
         name_end = 2 + name_length * 2
         offset = name_end
 
-        color_model = block_data[offset:offset +
-                                 4].decode('ascii', errors='ignore').strip()
+        color_model = (
+            block_data[offset : offset + 4].decode("ascii", errors="ignore").strip()
+        )
         offset += 4
 
-        if color_model == 'RGB':
-            components = struct.unpack('>fff', block_data[offset:offset + 12])
-            r, g, b = [max(0, min(255, round(component * 255)))
-                       for component in components]
+        if color_model == "RGB":
+            components = struct.unpack(">fff", block_data[offset : offset + 12])
+            r, g, b = [
+                max(0, min(255, round(component * 255))) for component in components
+            ]
             return f"#{r:02X}{g:02X}{b:02X}"
 
-        if color_model == 'GRAY':
-            value = struct.unpack('>f', block_data[offset:offset + 4])[0]
+        if color_model == "GRAY":
+            value = struct.unpack(">f", block_data[offset : offset + 4])[0]
             gray = max(0, min(255, round(value * 255)))
             return f"#{gray:02X}{gray:02X}{gray:02X}"
 
-        if color_model == 'CMYK':
-            c, m, y, k = struct.unpack('>ffff', block_data[offset:offset + 16])
+        if color_model == "CMYK":
+            c, m, y, k = struct.unpack(">ffff", block_data[offset : offset + 16])
             r = round(255 * (1 - c) * (1 - k))
             g = round(255 * (1 - m) * (1 - k))
             b = round(255 * (1 - y) * (1 - k))
@@ -418,7 +454,7 @@ class PaletteManager:
         if not PIL_AVAILABLE:
             return False
         img = PILImage.open(filepath)
-        img = img.convert('RGBA')
+        img = img.convert("RGBA")
         unique_colors = []
         seen_colors = set()
         for pixel in img.getdata():
@@ -541,9 +577,10 @@ class DrawingCanvas(tk.Canvas):
                     continue
                 src_idx = (src_y * layer.width + src_x) * 4
                 dst_idx = (row * width + col) * 4
-                selection_pixels[dst_idx:dst_idx +
-                                 4] = original_pixels[src_idx:src_idx + 4]
-                base_pixels[src_idx:src_idx + 4] = b"\x00\x00\x00\x00"
+                selection_pixels[dst_idx : dst_idx + 4] = original_pixels[
+                    src_idx : src_idx + 4
+                ]
+                base_pixels[src_idx : src_idx + 4] = b"\x00\x00\x00\x00"
 
         return original_pixels, base_pixels, selection_pixels, selection
 
@@ -553,8 +590,9 @@ class DrawingCanvas(tk.Canvas):
             return False
 
         layer = self.layer_manager.get_active_layer()
-        original_pixels, base_pixels, selection_pixels, bounds = self._build_selection_drag_data(
-            layer, selection)
+        original_pixels, base_pixels, selection_pixels, bounds = (
+            self._build_selection_drag_data(layer, selection)
+        )
         self._selection_drag_original_pixels = original_pixels
         self._selection_drag_base_pixels = base_pixels
         self._selection_drag_pixels = selection_pixels
@@ -564,7 +602,10 @@ class DrawingCanvas(tk.Canvas):
         return True
 
     def _render_selection_drag(self, offset_x, offset_y):
-        if self._selection_drag_base_pixels is None or self._selection_drag_pixels is None:
+        if (
+            self._selection_drag_base_pixels is None
+            or self._selection_drag_pixels is None
+        ):
             return
 
         layer = self.layer_manager.get_active_layer()
@@ -583,8 +624,9 @@ class DrawingCanvas(tk.Canvas):
                     continue
                 src_idx = (row * width + col) * 4
                 dst_idx = (dest_y * layer.width + dest_x) * 4
-                preview_pixels[dst_idx:dst_idx +
-                               4] = self._selection_drag_pixels[src_idx:src_idx + 4]
+                preview_pixels[dst_idx : dst_idx + 4] = self._selection_drag_pixels[
+                    src_idx : src_idx + 4
+                ]
 
         layer.pixels = preview_pixels
         self.layer_manager.mark_dirty()
@@ -778,18 +820,30 @@ class DrawingCanvas(tk.Canvas):
             self.tool_manager.selection_end = (cx, cy)
             self.redraw()
         elif self.is_painting:
-            if tool == "pencil" and shift_held and self._line_start_pos and self._stroke_snapshot is not None:
+            if (
+                tool == "pencil"
+                and shift_held
+                and self._line_start_pos
+                and self._stroke_snapshot is not None
+            ):
                 layer = self.layer_manager.get_active_layer()
                 layer.pixels = bytearray(self._stroke_snapshot)
                 self._draw_line(
-                    self._line_start_pos[0], self._line_start_pos[1], cx, cy, self.app.foreground_rgba)
+                    self._line_start_pos[0],
+                    self._line_start_pos[1],
+                    cx,
+                    cy,
+                    self.app.foreground_rgba,
+                )
                 self.last_pos = (cx, cy)
                 self.redraw()
-            elif tool in ("pencil", "eraser") and self.last_pos and self.last_pos != (cx, cy):
-                color = self.app.foreground_rgba if tool == "pencil" else (
-                    0, 0, 0, 0)
-                self._draw_line(self.last_pos[0],
-                                self.last_pos[1], cx, cy, color)
+            elif (
+                tool in ("pencil", "eraser")
+                and self.last_pos
+                and self.last_pos != (cx, cy)
+            ):
+                color = self.app.foreground_rgba if tool == "pencil" else (0, 0, 0, 0)
+                self._draw_line(self.last_pos[0], self.last_pos[1], cx, cy, color)
                 self.last_pos = (cx, cy)
                 self.redraw()
             elif self.last_pos != (cx, cy):
@@ -803,12 +857,14 @@ class DrawingCanvas(tk.Canvas):
         self._stroke_snapshot = None
 
         if self.tool_manager.current_tool == "selection":
-            if self._selection_drag_start is not None and self._selection_drag_bounds is not None:
+            if (
+                self._selection_drag_start is not None
+                and self._selection_drag_bounds is not None
+            ):
                 dx, dy = self._selection_drag_offset
                 layer = self.layer_manager.get_active_layer()
                 if dx == 0 and dy == 0:
-                    layer.pixels = bytearray(
-                        self._selection_drag_original_pixels)
+                    layer.pixels = bytearray(self._selection_drag_original_pixels)
                     self.layer_manager.mark_dirty()
                 else:
                     self.history.save_state(
@@ -844,7 +900,8 @@ class DrawingCanvas(tk.Canvas):
         if tool == "pencil":
             if is_click:
                 self.history.save_state(
-                    self.layer_manager.active_layer_index, layer.pixels)
+                    self.layer_manager.active_layer_index, layer.pixels
+                )
             layer.set_pixel(cx, cy, app.foreground_rgba)
             self.layer_manager.mark_dirty()
             self.redraw()
@@ -852,7 +909,8 @@ class DrawingCanvas(tk.Canvas):
         elif tool == "eraser":
             if is_click:
                 self.history.save_state(
-                    self.layer_manager.active_layer_index, layer.pixels)
+                    self.layer_manager.active_layer_index, layer.pixels
+                )
             layer.set_pixel(cx, cy, (0, 0, 0, 0))
             self.layer_manager.mark_dirty()
             self.redraw()
@@ -874,8 +932,7 @@ class DrawingCanvas(tk.Canvas):
         if target_color == fill_color:
             return
 
-        self.history.save_state(
-            self.layer_manager.active_layer_index, layer.pixels)
+        self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
 
         stack = [(start_x, start_y)]
         visited = set()
@@ -923,11 +980,13 @@ class DrawingCanvas(tk.Canvas):
                 x2 = self.offset_x + (max(start[0], end[0]) + 1) * zoom
                 y2 = self.offset_y + (max(start[1], end[1]) + 1) * zoom
                 self.create_rectangle(
-                    x1, y1, x2, y2, outline=ACCENT_COLOR, dash=(4, 4), width=2)
+                    x1, y1, x2, y2, outline=ACCENT_COLOR, dash=(4, 4), width=2
+                )
 
     def _redraw_with_images(self, w, h, zoom, canvas_width, canvas_height):
         visible = self._get_visible_pixel_bounds(
-            w, h, zoom, canvas_width, canvas_height)
+            w, h, zoom, canvas_width, canvas_height
+        )
         self._checkerboard_photo = None
         self._composite_photo = None
 
@@ -941,20 +1000,21 @@ class DrawingCanvas(tk.Canvas):
         image_y = self.offset_y + start_y * zoom
 
         checkerboard = self._build_checkerboard_image(
-            start_x, start_y, crop_width, crop_height, zoom)
+            start_x, start_y, crop_width, crop_height, zoom
+        )
         checkerboard = checkerboard.resize(
-            (crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
+            (crop_width * zoom, crop_height * zoom), IMAGE_NEAREST
+        )
         self._checkerboard_photo = PILImageTk.PhotoImage(checkerboard)
-        self.create_image(image_x, image_y,
-                          image=self._checkerboard_photo, anchor=tk.NW)
+        self.create_image(
+            image_x, image_y, image=self._checkerboard_photo, anchor=tk.NW
+        )
 
         source = self.layer_manager.get_composite_image()
         source = source.crop((start_x, start_y, end_x, end_y))
-        scaled = source.resize(
-            (crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
+        scaled = source.resize((crop_width * zoom, crop_height * zoom), IMAGE_NEAREST)
         self._composite_photo = PILImageTk.PhotoImage(scaled)
-        self.create_image(image_x, image_y,
-                          image=self._composite_photo, anchor=tk.NW)
+        self.create_image(image_x, image_y, image=self._composite_photo, anchor=tk.NW)
 
         if self.app and self.app.show_grid:
             self._draw_grid_lines(start_x, start_y, end_x, end_y, zoom)
@@ -968,28 +1028,33 @@ class DrawingCanvas(tk.Canvas):
 
                 if (x // check_size + y // check_size) % 2 == 0:
                     self.create_rectangle(
-                        px, py, px + zoom, py + zoom, fill="#2a2a2a", outline="")
+                        px, py, px + zoom, py + zoom, fill="#2a2a2a", outline=""
+                    )
                 else:
                     self.create_rectangle(
-                        px, py, px + zoom, py + zoom, fill="#333333", outline="")
+                        px, py, px + zoom, py + zoom, fill="#333333", outline=""
+                    )
 
         composite = self.layer_manager.render_composite()
 
         for y in range(h):
             for x in range(w):
                 idx = (y * w + x) * 4
-                r, g, b, a = composite[idx:idx + 4]
+                r, g, b, a = composite[idx : idx + 4]
                 if a > 0:
                     px = self.offset_x + x * zoom
                     py = self.offset_y + y * zoom
                     color = f"#{r:02X}{g:02X}{b:02X}"
                     self.create_rectangle(
-                        px, py, px + zoom, py + zoom, fill=color, outline="")
+                        px, py, px + zoom, py + zoom, fill=color, outline=""
+                    )
 
         if self.app and self.app.show_grid:
             self._draw_grid_lines(0, 0, w, h, zoom)
 
-    def _get_visible_pixel_bounds(self, width, height, zoom, canvas_width, canvas_height):
+    def _get_visible_pixel_bounds(
+        self, width, height, zoom, canvas_width, canvas_height
+    ):
         start_x = max(0, math.floor(-self.offset_x / zoom))
         start_y = max(0, math.floor(-self.offset_y / zoom))
         end_x = min(width, math.ceil((canvas_width - self.offset_x) / zoom))
@@ -1022,8 +1087,7 @@ class DrawingCanvas(tk.Canvas):
 
         tile_size = check_size * 2
         tile = PILImage.new("RGB", (tile_size, tile_size), (42, 42, 42))
-        light_tile = PILImage.new(
-            "RGB", (check_size, check_size), (51, 51, 51))
+        light_tile = PILImage.new("RGB", (check_size, check_size), (51, 51, 51))
         tile.paste(light_tile, (check_size, 0))
         tile.paste(light_tile, (0, check_size))
         self._checkerboard_tile_cache[check_size] = tile
@@ -1033,11 +1097,23 @@ class DrawingCanvas(tk.Canvas):
         for x in range(start_x, end_x + 1):
             px = self.offset_x + x * zoom
             self.create_line(
-                px, self.offset_y + start_y * zoom, px, self.offset_y + end_y * zoom, fill="#444444", width=1)
+                px,
+                self.offset_y + start_y * zoom,
+                px,
+                self.offset_y + end_y * zoom,
+                fill="#444444",
+                width=1,
+            )
         for y in range(start_y, end_y + 1):
             py = self.offset_y + y * zoom
             self.create_line(
-                self.offset_x + start_x * zoom, py, self.offset_x + end_x * zoom, py, fill="#444444", width=1)
+                self.offset_x + start_x * zoom,
+                py,
+                self.offset_x + end_x * zoom,
+                py,
+                fill="#444444",
+                width=1,
+            )
 
 
 class App:
@@ -1054,8 +1130,7 @@ class App:
         self.height = 16
 
         self.history = HistoryManager(20)
-        self.layer_manager = LayerManager(
-            self.width, self.height, self.history)
+        self.layer_manager = LayerManager(self.width, self.height, self.history)
         self.tool_manager = ToolManager()
         self.palette_manager = PaletteManager()
 
@@ -1095,7 +1170,7 @@ class App:
             "selection": "icons/bounding-box.png",
             "eye_on": "icons/eye-on.png",
             "eye_off": "icons/eye-off.png",
-            "trash": "icons/trash.png"
+            "trash": "icons/trash.png",
         }
         for key, path in icon_files.items():
             try:
@@ -1108,6 +1183,7 @@ class App:
 
     def _pil_to_tk(self, pil_image):
         import io
+
         buffer = io.BytesIO()
         pil_image.save(buffer, format="PNG")
         return buffer.getvalue()
@@ -1117,8 +1193,7 @@ class App:
         main_container = tk.Frame(self.root, bg=BG_COLOR)
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        toolbar = tk.Frame(main_container, bg=PANEL_COLOR,
-                           width=60, padx=2, pady=2)
+        toolbar = tk.Frame(main_container, bg=PANEL_COLOR, width=60, padx=2, pady=2)
         toolbar.pack(side=tk.LEFT, fill=tk.Y)
         toolbar.pack_propagate(False)
 
@@ -1129,14 +1204,16 @@ class App:
 
         self.canvas_frame = canvas_container
         self.canvas = DrawingCanvas(
-            canvas_container, self.layer_manager, self.tool_manager, self.history)
+            canvas_container, self.layer_manager, self.tool_manager, self.history
+        )
         self.canvas.app = self
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self._set_cursor(self.tool_manager.current_tool)
 
         right_panel = tk.Frame(
-            main_container, bg=PANEL_COLOR, width=200, padx=2, pady=2)
+            main_container, bg=PANEL_COLOR, width=200, padx=2, pady=2
+        )
         right_panel.pack(side=tk.RIGHT, fill=tk.Y)
         right_panel.pack_propagate(False)
 
@@ -1151,7 +1228,7 @@ class App:
             ("eraser", "eraser", "Eraser (E)"),
             ("bucket", "bucket", "Bucket Fill (B)"),
             ("eyedropper", "eyedropper", "Eyedropper (I)"),
-            ("selection", "selection", "Selection (S)")
+            ("selection", "selection", "Selection (S)"),
         ]
 
         self.tool_buttons = {}
@@ -1165,8 +1242,15 @@ class App:
             x = widget.winfo_rootx() + widget.winfo_width() // 2
             y = widget.winfo_rooty() - 30
             self.tooltip_window.wm_geometry(f"+{x}+{y}")
-            label = tk.Label(self.tooltip_window, text=text, bg="#444444",
-                             fg="white", padx=6, pady=2, font=("Arial", 8))
+            label = tk.Label(
+                self.tooltip_window,
+                text=text,
+                bg="#444444",
+                fg="white",
+                padx=6,
+                pady=2,
+                font=("Arial", 8),
+            )
             label.pack()
 
         def hide_tooltip(event):
@@ -1177,19 +1261,21 @@ class App:
         for icon_key, tool_id, tooltip in tools:
             icon = self.icons.get(icon_key)
             btn = tk.Button(
-                parent, image=icon, bg=PANEL_COLOR,
+                parent,
+                image=icon,
+                bg=PANEL_COLOR,
                 activebackground=ACCENT_COLOR,
-                relief=tk.FLAT, width=28, height=28,
-                command=lambda t=tool_id: self._select_tool(t)
+                relief=tk.FLAT,
+                width=28,
+                height=28,
+                command=lambda t=tool_id: self._select_tool(t),
             )
             if icon:
                 btn.config(image=icon)
             else:
-                btn.config(text=icon_key[0].upper(),
-                           font=("Arial", 11, "bold"))
+                btn.config(text=icon_key[0].upper(), font=("Arial", 11, "bold"))
             btn.pack(pady=2, padx=2)
-            btn.bind("<Enter>", lambda e, w=btn,
-                     t=tooltip: show_tooltip(w, t, e))
+            btn.bind("<Enter>", lambda e, w=btn, t=tooltip: show_tooltip(w, t, e))
             btn.bind("<Leave>", hide_tooltip)
             self.tool_buttons[tool_id] = btn
 
@@ -1204,10 +1290,9 @@ class App:
             fg=TEXT_COLOR,
             font=("Arial", 8),
             anchor="center",
-            justify="center"
+            justify="center",
         )
-        self.canvas_size_label.pack(
-            side=tk.BOTTOM, fill=tk.X, padx=2, pady=(6, 2))
+        self.canvas_size_label.pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=(6, 2))
         self._update_canvas_size_display()
 
         self._select_tool("pencil")
@@ -1217,11 +1302,11 @@ class App:
         "eraser": "crosshair",
         "bucket": "crosshair",
         "eyedropper": "target",
-        "selection": "crosshair"
+        "selection": "crosshair",
     }
 
     def _set_cursor(self, tool):
-        if hasattr(self, 'canvas'):
+        if hasattr(self, "canvas"):
             cursor = self.CURSORS.get(tool, "arrow")
             if self.alt_eyedropper_active:
                 cursor = self.CURSORS["eyedropper"]
@@ -1233,65 +1318,103 @@ class App:
     def _setup_layer_panel(self, parent):
         """Setup the layer panel."""
         layer_frame = tk.LabelFrame(
-            parent, text="Layers", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
+            parent, text="Layers", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5
+        )
         layer_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.layer_canvas = tk.Canvas(
-            layer_frame, bg="#333333", height=160, highlightthickness=0)
+            layer_frame, bg="#333333", height=160, highlightthickness=0
+        )
         self.layer_scrollbar = tk.Scrollbar(
-            layer_frame, orient=tk.VERTICAL, command=self.layer_canvas.yview)
+            layer_frame, orient=tk.VERTICAL, command=self.layer_canvas.yview
+        )
         self.layer_canvas.configure(yscrollcommand=self.layer_scrollbar.set)
 
         self.layer_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.layer_canvas.pack(fill=tk.X, expand=False)
 
         self.layer_inner = tk.Frame(self.layer_canvas, bg="#333333")
-        self.layer_canvas.create_window(
-            (0, 0), window=self.layer_inner, anchor=tk.NW)
+        self.layer_canvas.create_window((0, 0), window=self.layer_inner, anchor=tk.NW)
 
-        self.layer_inner.bind("<Configure>", lambda e: self.layer_canvas.configure(
-            scrollregion=self.layer_canvas.bbox("all")))
+        self.layer_inner.bind(
+            "<Configure>",
+            lambda e: self.layer_canvas.configure(
+                scrollregion=self.layer_canvas.bbox("all")
+            ),
+        )
 
         btn_frame = tk.Frame(layer_frame, bg=PANEL_COLOR)
         btn_frame.pack(fill=tk.X, pady=2)
 
         def make_tooltip(widget, text):
             def show(event):
-                if hasattr(self, 'tooltip_window') and self.tooltip_window:
+                if hasattr(self, "tooltip_window") and self.tooltip_window:
                     self.tooltip_window.destroy()
                 self.tooltip_window = tk.Toplevel(widget)
                 self.tooltip_window.wm_overrideredirect(True)
                 x = widget.winfo_rootx() + widget.winfo_width() // 2
                 y = widget.winfo_rooty() - 25
                 self.tooltip_window.wm_geometry(f"+{x}+{y}")
-                label = tk.Label(self.tooltip_window, text=text, bg="#444444",
-                                 fg="white", padx=6, pady=2, font=("Arial", 8))
+                label = tk.Label(
+                    self.tooltip_window,
+                    text=text,
+                    bg="#444444",
+                    fg="white",
+                    padx=6,
+                    pady=2,
+                    font=("Arial", 8),
+                )
                 label.pack()
 
             def hide(event):
-                if hasattr(self, 'tooltip_window') and self.tooltip_window:
+                if hasattr(self, "tooltip_window") and self.tooltip_window:
                     self.tooltip_window.destroy()
                     self.tooltip_window = None
+
             widget.bind("<Enter>", show)
             widget.bind("<Leave>", hide)
 
-        add_btn = tk.Button(btn_frame, text="+", width=3,
-                            bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._add_layer)
+        add_btn = tk.Button(
+            btn_frame,
+            text="+",
+            width=3,
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            command=self._add_layer,
+        )
         add_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(add_btn, "Add Layer")
 
-        dup_btn = tk.Button(btn_frame, text="D", width=3, bg=PANEL_COLOR,
-                            fg=TEXT_COLOR, command=self._duplicate_layer)
+        dup_btn = tk.Button(
+            btn_frame,
+            text="D",
+            width=3,
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            command=self._duplicate_layer,
+        )
         dup_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(dup_btn, "Duplicate Layer")
 
-        up_btn = tk.Button(btn_frame, text="^", width=3, bg=PANEL_COLOR,
-                           fg=TEXT_COLOR, command=self._move_layer_down)
+        up_btn = tk.Button(
+            btn_frame,
+            text="^",
+            width=3,
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            command=self._move_layer_down,
+        )
         up_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(up_btn, "Move Layer Up")
 
-        down_btn = tk.Button(btn_frame, text="v", width=3,
-                             bg=PANEL_COLOR, fg=TEXT_COLOR, command=self._move_layer_up)
+        down_btn = tk.Button(
+            btn_frame,
+            text="v",
+            width=3,
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            command=self._move_layer_up,
+        )
         down_btn.pack(side=tk.LEFT, padx=1)
         make_tooltip(down_btn, "Move Layer Down")
 
@@ -1300,48 +1423,68 @@ class App:
     def _setup_palette_panel(self, parent):
         """Setup the color palette panel."""
         palette_frame = tk.LabelFrame(
-            parent, text="Palette", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
+            parent, text="Palette", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5
+        )
         palette_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         palette_content = tk.Frame(palette_frame, bg=PANEL_COLOR)
         palette_content.pack(fill=tk.BOTH, expand=True)
 
         self.palette_canvas = tk.Canvas(
-            palette_content, bg=PANEL_COLOR, highlightthickness=0)
+            palette_content, bg=PANEL_COLOR, highlightthickness=0
+        )
         self.palette_scrollbar = tk.Scrollbar(
-            palette_content, orient=tk.VERTICAL, command=self.palette_canvas.yview)
-        self.palette_canvas.configure(
-            yscrollcommand=self.palette_scrollbar.set)
+            palette_content, orient=tk.VERTICAL, command=self.palette_canvas.yview
+        )
+        self.palette_canvas.configure(yscrollcommand=self.palette_scrollbar.set)
 
         self.palette_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.palette_canvas.pack(
-            side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0))
+        self.palette_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 0))
 
         self.palette_inner = tk.Frame(self.palette_canvas, bg=PANEL_COLOR)
         self.palette_canvas.create_window(
-            (0, 0), window=self.palette_inner, anchor=tk.NW)
+            (0, 0), window=self.palette_inner, anchor=tk.NW
+        )
 
-        self.palette_inner.bind("<Configure>", lambda e: self.palette_canvas.configure(
-            scrollregion=self.palette_canvas.bbox("all")))
+        self.palette_inner.bind(
+            "<Configure>",
+            lambda e: self.palette_canvas.configure(
+                scrollregion=self.palette_canvas.bbox("all")
+            ),
+        )
 
-        tk.Button(palette_frame, text="Load Palette", bg=PANEL_COLOR,
-                  fg=TEXT_COLOR, command=self._load_palette).pack(fill=tk.X, pady=(6, 0))
+        tk.Button(
+            palette_frame,
+            text="Load Palette",
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            command=self._load_palette,
+        ).pack(fill=tk.X, pady=(6, 0))
 
         self._update_palette()
 
     def _setup_color_picker(self, parent):
         """Setup the color picker display."""
         color_frame = tk.LabelFrame(
-            parent, text="Color", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5)
+            parent, text="Color", bg=PANEL_COLOR, fg=TEXT_COLOR, padx=5, pady=5
+        )
         color_frame.pack(fill=tk.X)
 
         self.fg_color_canvas = tk.Canvas(
-            color_frame, width=50, height=50, bg=BG_COLOR, highlightthickness=1, highlightbackground=BORDER_COLOR)
+            color_frame,
+            width=50,
+            height=50,
+            bg=BG_COLOR,
+            highlightthickness=1,
+            highlightbackground=BORDER_COLOR,
+        )
         self.fg_color_canvas.pack(pady=2)
         self.fg_color_canvas.bind(
-            "<Button-1>", lambda e: self._choose_color("foreground"))
+            "<Button-1>", lambda e: self._choose_color("foreground")
+        )
         self.fg_color_canvas.bind(
-            "<Button-3>", lambda e: self._choose_color("background"))
+            "<Button-3>", lambda e: self._choose_color("background")
+        )
 
         self._update_color_display()
 
@@ -1349,20 +1492,20 @@ class App:
         self.fg_color_canvas.delete("all")
         bg = self.background
         fg = self.foreground
-        self.fg_color_canvas.create_rectangle(
-            5, 5, 45, 45, fill=bg, outline="")
-        self.fg_color_canvas.create_rectangle(
-            10, 10, 40, 40, fill=fg, outline="")
+        self.fg_color_canvas.create_rectangle(5, 5, 45, 45, fill=bg, outline="")
+        self.fg_color_canvas.create_rectangle(10, 10, 40, 40, fill=fg, outline="")
 
     def _choose_color(self, target):
         if target == "foreground":
             color = colorchooser.askcolor(
-                self.foreground, title="Choose Foreground Color")
+                self.foreground, title="Choose Foreground Color"
+            )
             if color[1]:
                 self.set_foreground_color(color[1])
         else:
             color = colorchooser.askcolor(
-                self.background, title="Choose Background Color")
+                self.background, title="Choose Background Color"
+            )
             if color[1]:
                 self.set_background_color(color[1])
 
@@ -1405,10 +1548,13 @@ class App:
 
             eye_icon = self.icons.get("eye_on" if layer.visible else "eye_off")
             eye_btn = tk.Button(
-                row_frame, image=eye_icon, width=18, height=18, bg=bg_color,
+                row_frame,
+                image=eye_icon,
+                width=18,
+                height=18,
+                bg=bg_color,
                 relief=tk.FLAT,
-                command=lambda idx=i: self._toggle_layer_visibility_by_index(
-                    idx)
+                command=lambda idx=i: self._toggle_layer_visibility_by_index(idx),
             )
             if eye_icon:
                 eye_btn.config(image=eye_icon)
@@ -1418,9 +1564,13 @@ class App:
 
             trash_icon = self.icons.get("trash")
             delete_btn = tk.Button(
-                row_frame, image=trash_icon, width=18, height=18, bg=bg_color,
+                row_frame,
+                image=trash_icon,
+                width=18,
+                height=18,
+                bg=bg_color,
                 relief=tk.FLAT,
-                command=lambda idx=i: self._delete_layer_by_index(idx)
+                command=lambda idx=i: self._delete_layer_by_index(idx),
             )
             if trash_icon:
                 delete_btn.config(image=trash_icon)
@@ -1429,19 +1579,27 @@ class App:
             delete_btn.pack(side=tk.RIGHT, padx=(5, 2))
 
             name_label = tk.Label(
-                row_frame, text=self._format_layer_name(layer.name), bg=bg_color, fg=TEXT_COLOR,
-                font=("Arial", 9), anchor="w"
+                row_frame,
+                text=self._format_layer_name(layer.name),
+                bg=bg_color,
+                fg=TEXT_COLOR,
+                font=("Arial", 9),
+                anchor="w",
             )
             name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            name_label.bind("<Button-1>", lambda e,
-                            idx=i: self._schedule_layer_select(idx))
-            name_label.bind("<Double-Button-1>", lambda e,
-                            idx=i: self._rename_layer_from_click(idx))
+            name_label.bind(
+                "<Button-1>", lambda e, idx=i: self._schedule_layer_select(idx)
+            )
+            name_label.bind(
+                "<Double-Button-1>", lambda e, idx=i: self._rename_layer_from_click(idx)
+            )
 
-            row_frame.bind("<Button-1>", lambda e,
-                           idx=i: self._schedule_layer_select(idx))
-            row_frame.bind("<Double-Button-1>", lambda e,
-                           idx=i: self._rename_layer_from_click(idx))
+            row_frame.bind(
+                "<Button-1>", lambda e, idx=i: self._schedule_layer_select(idx)
+            )
+            row_frame.bind(
+                "<Double-Button-1>", lambda e, idx=i: self._rename_layer_from_click(idx)
+            )
 
     def _select_layer(self, index):
         self.layer_manager.active_layer_index = index
@@ -1450,7 +1608,8 @@ class App:
     def _schedule_layer_select(self, index):
         self._cancel_pending_layer_select()
         self._pending_layer_select_job = self.root.after(
-            180, lambda idx=index: self._run_scheduled_layer_select(idx))
+            180, lambda idx=index: self._run_scheduled_layer_select(idx)
+        )
 
     def _run_scheduled_layer_select(self, index):
         self._pending_layer_select_job = None
@@ -1510,7 +1669,7 @@ class App:
             "Rename Layer",
             "Layer name (max 18 chars):",
             initialvalue=layer.name,
-            parent=self.root
+            parent=self.root,
         )
         if new_name is None:
             return
@@ -1530,8 +1689,7 @@ class App:
         self._rename_layer(self.layer_manager.active_layer_index)
 
     def _toggle_layer_visibility(self, event=None):
-        self.layer_manager.toggle_visibility(
-            self.layer_manager.active_layer_index)
+        self.layer_manager.toggle_visibility(self.layer_manager.active_layer_index)
         self._update_layer_list()
         self.canvas.redraw()
 
@@ -1545,14 +1703,18 @@ class App:
             row = i // cols
             col = i % cols
             is_selected = color.upper() == self.foreground.upper()
-            swatch = tk.Canvas(self.palette_inner, width=20, height=20, bg=color,
-                               highlightthickness=2 if is_selected else 1,
-                               highlightbackground=ACCENT_COLOR if is_selected else BORDER_COLOR,
-                               highlightcolor=ACCENT_COLOR if is_selected else BORDER_COLOR)
+            swatch = tk.Canvas(
+                self.palette_inner,
+                width=20,
+                height=20,
+                bg=color,
+                highlightthickness=2 if is_selected else 1,
+                highlightbackground=ACCENT_COLOR if is_selected else BORDER_COLOR,
+                highlightcolor=ACCENT_COLOR if is_selected else BORDER_COLOR,
+            )
             swatch.grid(row=row, column=col, padx=1, pady=1)
             swatch.bind("<Button-1>", lambda e, c=color: self._set_color(e, c))
-            swatch.bind("<Button-3>", lambda e,
-                        c=color: self._set_bg_color(e, c))
+            swatch.bind("<Button-3>", lambda e, c=color: self._set_bg_color(e, c))
 
     def _set_color(self, event, color):
         self.set_foreground_color(color)
@@ -1563,14 +1725,18 @@ class App:
     def _load_palette(self):
         filepath = filedialog.askopenfilename(
             title="Load Palette",
-            filetypes=[("Palette Files", "*.pal *.gpl *.ase *.png"),
-                       ("All Files", "*.*")]
+            filetypes=[
+                ("Palette Files", "*.pal *.gpl *.ase *.png"),
+                ("All Files", "*.*"),
+            ],
         )
         if filepath:
             try:
                 if not self.palette_manager.load_palette_file(filepath):
                     messagebox.showwarning(
-                        "Load Palette", "No colors were found in the selected palette file.")
+                        "Load Palette",
+                        "No colors were found in the selected palette file.",
+                    )
                     return
                 self._update_palette()
             except Exception as e:
@@ -1592,12 +1758,13 @@ class App:
 
         file_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="New", command=self._new_file, accelerator="Ctrl+N")
         file_menu.add_command(
-            label="New", command=self._new_file, accelerator="Ctrl+N")
+            label="Open", command=self._open_file, accelerator="Ctrl+O"
+        )
         file_menu.add_command(
-            label="Open", command=self._open_file, accelerator="Ctrl+O")
-        file_menu.add_command(
-            label="Save", command=self._save_file, accelerator="Ctrl+S")
+            label="Save", command=self._save_file, accelerator="Ctrl+S"
+        )
         file_menu.add_command(label="Save As", command=self._save_file_as)
         file_menu.add_command(label="Import PNG", command=self._import_png)
         file_menu.add_command(label="Export PNG", command=self._export_flat)
@@ -1608,12 +1775,18 @@ class App:
         menubar.add_cascade(label="View", menu=view_menu)
         self.grid_var = tk.BooleanVar(value=True)
         view_menu.add_checkbutton(
-            label="Show Grid", variable=self.grid_var, command=self._toggle_grid, accelerator="Ctrl+H")
+            label="Show Grid",
+            variable=self.grid_var,
+            command=self._toggle_grid,
+            accelerator="Ctrl+H",
+        )
         view_menu.add_separator()
         view_menu.add_command(
-            label="Zoom In", command=self.canvas.zoom_in, accelerator="Ctrl++")
+            label="Zoom In", command=self.canvas.zoom_in, accelerator="Ctrl++"
+        )
         view_menu.add_command(
-            label="Zoom Out", command=self.canvas.zoom_out, accelerator="Ctrl+-")
+            label="Zoom Out", command=self.canvas.zoom_out, accelerator="Ctrl+-"
+        )
 
         help_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -1635,8 +1808,7 @@ class App:
         self.root.bind("<Control-equal>", lambda e: self.canvas.zoom_in())
         self.root.bind("<Control-KP_Add>", lambda e: self.canvas.zoom_in())
         self.root.bind("<Control-minus>", lambda e: self.canvas.zoom_out())
-        self.root.bind("<Control-KP_Subtract>",
-                       lambda e: self.canvas.zoom_out())
+        self.root.bind("<Control-KP_Subtract>", lambda e: self.canvas.zoom_out())
 
         self.root.bind("<Control-z>", lambda e: self._undo())
         self.root.bind("<Control-y>", lambda e: self._redo())
@@ -1741,8 +1913,7 @@ class App:
         if selection:
             x1, y1, x2, y2 = selection
             layer = self.layer_manager.get_active_layer()
-            self.history.save_state(
-                self.layer_manager.active_layer_index, layer.pixels)
+            self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
             for y in range(max(0, y1), min(y2 + 1, layer.height)):
                 for x in range(max(0, x1), min(x2 + 1, layer.width)):
                     layer.set_pixel(x, y, (0, 0, 0, 0))
@@ -1781,14 +1952,12 @@ class App:
         dialog.transient(self.root)
         dialog.bind("<Return>", lambda e: create_canvas())
 
-        tk.Label(dialog, text="Width:", bg=BG_COLOR,
-                 fg=TEXT_COLOR).pack(pady=5)
+        tk.Label(dialog, text="Width:", bg=BG_COLOR, fg=TEXT_COLOR).pack(pady=5)
         width_var = tk.StringVar(value="16")
         width_entry = tk.Entry(dialog, textvariable=width_var, width=10)
         width_entry.pack()
 
-        tk.Label(dialog, text="Height:", bg=BG_COLOR,
-                 fg=TEXT_COLOR).pack(pady=5)
+        tk.Label(dialog, text="Height:", bg=BG_COLOR, fg=TEXT_COLOR).pack(pady=5)
         height_var = tk.StringVar(value="16")
         tk.Entry(dialog, textvariable=height_var, width=10).pack()
 
@@ -1801,8 +1970,14 @@ class App:
             except ValueError:
                 pass
 
-        create_button = tk.Button(dialog, text="Create", command=create_canvas,
-                                  bg=PANEL_COLOR, fg=TEXT_COLOR, default=tk.ACTIVE)
+        create_button = tk.Button(
+            dialog,
+            text="Create",
+            command=create_canvas,
+            bg=PANEL_COLOR,
+            fg=TEXT_COLOR,
+            default=tk.ACTIVE,
+        )
         create_button.pack(pady=20)
         self._center_dialog(dialog)
         width_entry.focus_set()
@@ -1810,8 +1985,7 @@ class App:
     def _open_file(self):
         filepath = filedialog.askopenfilename(
             title="Open Project",
-            filetypes=[("SpriteLite Projects", "*.sprlite"),
-                       ("All Files", "*.*")]
+            filetypes=[("SpriteLite Projects", "*.sprlite"), ("All Files", "*.*")],
         )
         if not filepath:
             return
@@ -1832,7 +2006,7 @@ class App:
         filepath = filedialog.asksaveasfilename(
             title="Save Project",
             defaultextension=".sprlite",
-            filetypes=[("SpriteLite Projects", "*.sprlite")]
+            filetypes=[("SpriteLite Projects", "*.sprlite")],
         )
         if filepath:
             self.current_file = filepath
@@ -1853,7 +2027,7 @@ class App:
         filepath = filedialog.asksaveasfilename(
             title="Export PNG",
             defaultextension=".png",
-            filetypes=[("PNG Files", "*.png")]
+            filetypes=[("PNG Files", "*.png")],
         )
         if filepath:
             try:
@@ -1867,8 +2041,7 @@ class App:
             return
 
         filepath = filedialog.askopenfilename(
-            title="Import PNG",
-            filetypes=[("PNG Files", "*.png"), ("All Files", "*.*")]
+            title="Import PNG", filetypes=[("PNG Files", "*.png"), ("All Files", "*.*")]
         )
         if not filepath:
             return
@@ -1911,7 +2084,8 @@ class App:
         elif self._last_canvas_size is not None:
             previous_width, previous_height = self._last_canvas_size
             self.canvas.handle_resize(
-                previous_width, previous_height, event.width, event.height)
+                previous_width, previous_height, event.width, event.height
+            )
         else:
             self.canvas.redraw()
 
@@ -1963,10 +2137,10 @@ class App:
                 {
                     "name": layer.name,
                     "visible": layer.visible,
-                    "pixels": bytes(layer.pixels).hex()
+                    "pixels": bytes(layer.pixels).hex(),
                 }
                 for layer in self.layer_manager.layers
-            ]
+            ],
         }
 
     def _load_project_file(self, filepath):
@@ -1987,13 +2161,15 @@ class App:
 
         expected_pixel_bytes = width * height * 4
         for layer_data in project_data.get("layers", []):
-            layer = Layer(layer_data.get(
-                "name", f"Layer {len(layer_manager.layers) + 1}"), width, height)
+            layer = Layer(
+                layer_data.get("name", f"Layer {len(layer_manager.layers) + 1}"),
+                width,
+                height,
+            )
             layer.visible = bool(layer_data.get("visible", True))
             pixel_data = bytearray.fromhex(layer_data.get("pixels", ""))
             if len(pixel_data) != expected_pixel_bytes:
-                raise ValueError(
-                    "Layer pixel data does not match project size.")
+                raise ValueError("Layer pixel data does not match project size.")
             layer.pixels = pixel_data
             layer_manager.layers.append(layer)
 
@@ -2002,7 +2178,8 @@ class App:
 
         active_layer_index = int(project_data.get("active_layer_index", 0))
         layer_manager.active_layer_index = min(
-            max(active_layer_index, 0), len(layer_manager.layers) - 1)
+            max(active_layer_index, 0), len(layer_manager.layers) - 1
+        )
 
         self.foreground = project_data.get("foreground", "#000000")
         self.background = project_data.get("background", "#FFFFFF")
