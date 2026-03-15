@@ -1651,6 +1651,7 @@ class App:
         self.root.bind("<F2>", lambda e: self._rename_active_layer())
         self.root.bind("<Delete>", lambda e: self._delete_selection())
         self.root.bind("<BackSpace>", lambda e: self._delete_selection())
+        self.root.bind("<Alt-BackSpace>", self._fill_layer_with_foreground)
         self.root.bind("<Left>", lambda e: self._pan_canvas_by_keys(1, 0))
         self.root.bind("<Right>", lambda e: self._pan_canvas_by_keys(-1, 0))
         self.root.bind("<Up>", lambda e: self._pan_canvas_by_keys(0, 1))
@@ -1749,6 +1750,30 @@ class App:
             self.layer_manager.mark_dirty()
             self.canvas.tool_manager.clear_selection()
             self.canvas.redraw()
+    def _fill_layer_with_foreground(self, event=None):
+
+        focused_widget = self.root.focus_get()
+        if isinstance(focused_widget, (tk.Entry, tk.Text, tk.Spinbox)):
+            return
+
+        layer = self.layer_manager.get_active_layer()
+        color = self.foreground_rgba
+        selection = self.tool_manager.selection
+
+        self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
+
+        if selection:
+            x1, y1, x2, y2 = selection
+            for y in range(max(0, y1), min(y2 + 1, layer.height)):
+                for x in range(max(0, x1), min(x2 + 1, layer.width)):
+                    layer.set_pixel(x, y, color)
+        else:
+            for y in range(layer.height):
+                for x in range(layer.width):
+                    layer.set_pixel(x, y, color)
+
+        self.layer_manager.mark_dirty()
+        self.canvas.redraw()
 
     def _pan_canvas_by_keys(self, direction_x, direction_y):
         focused_widget = self.root.focus_get()
