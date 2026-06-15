@@ -1237,7 +1237,7 @@ class App:
             ("pencil", "pencil", "Pencil (P)"),
             ("eraser", "eraser", "Eraser (E)"),
             ("bucket", "bucket", "Bucket Fill (B)"),
-            ("eyedropper", "eyedropper", "Eyedropper (I)"),
+            ("eyedropper", "eyedropper", "Eyedropper (I or hold Alt)"),
             ("selection", "selection", "Selection (S)")
         ]
 
