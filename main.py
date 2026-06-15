@@ -123,37 +123,57 @@ def palettes_dir():
 
 
 class HistoryManager:
-    """Manages undo/redo operations with memory-efficient layer snapshots."""
+    """Manages undo/redo operations using full-document snapshots.
+
+    A snapshot captures the entire layer stack plus the active layer index, so
+    undo/redo restores both canvas pixel edits and structural layer changes
+    (add, delete, duplicate, reorder, rename, visibility).
+    """
 
     def __init__(self, max_levels=20):
         self.max_levels = max_levels
         self.undo_stack = []
         self.redo_stack = []
 
-    def save_state(self, layer_index, pixel_data):
-        """Save a snapshot of a single layer's pixel data."""
-        self.undo_stack.append((layer_index, bytearray(pixel_data)))
+    def snapshot(self, layer_manager):
+        """Capture the current document state without recording it."""
+        return (
+            [layer.copy() for layer in layer_manager.layers],
+            layer_manager.active_layer_index,
+        )
+
+    def push(self, snapshot):
+        """Record a previously captured snapshot as an undo point."""
+        self.undo_stack.append(snapshot)
         self.redo_stack.clear()
         if len(self.undo_stack) > self.max_levels:
             self.undo_stack.pop(0)
 
-    def undo(self, layers):
-        """Pop from undo stack, push current state to redo, return state to restore."""
-        if not self.undo_stack:
-            return None
-        layer_index, pixel_data = self.undo_stack.pop()
-        self.redo_stack.append(
-            (layer_index, bytearray(layers[layer_index].pixels)))
-        return layer_index, pixel_data
+    def save_state(self, layer_manager):
+        """Record the current document state before a mutation."""
+        self.push(self.snapshot(layer_manager))
 
-    def redo(self, layers):
-        """Pop from redo stack, push current state to undo, return state to restore."""
+    def _restore(self, layer_manager, snapshot):
+        layers, active_index = snapshot
+        layer_manager.layers = [layer.copy() for layer in layers]
+        layer_manager.active_layer_index = active_index
+        layer_manager.mark_dirty()
+
+    def undo(self, layer_manager):
+        """Restore the previous document state, returning True on success."""
+        if not self.undo_stack:
+            return False
+        self.redo_stack.append(self.snapshot(layer_manager))
+        self._restore(layer_manager, self.undo_stack.pop())
+        return True
+
+    def redo(self, layer_manager):
+        """Reapply the next document state, returning True on success."""
         if not self.redo_stack:
-            return None
-        layer_index, pixel_data = self.redo_stack.pop()
-        self.undo_stack.append(
-            (layer_index, bytearray(layers[layer_index].pixels)))
-        return layer_index, pixel_data
+            return False
+        self.undo_stack.append(self.snapshot(layer_manager))
+        self._restore(layer_manager, self.redo_stack.pop())
+        return True
 
     def can_undo(self):
         return len(self.undo_stack) > 0
@@ -218,6 +238,7 @@ class LayerManager:
         return self.layers[self.active_layer_index]
 
     def add_layer(self):
+        self.history.save_state(self)
         new_layer = Layer(
             f"Layer {len(self.layers) + 1}", self.width, self.height)
         self.layers.append(new_layer)
@@ -232,6 +253,7 @@ class LayerManager:
         if index is None:
             index = self.active_layer_index
 
+        self.history.save_state(self)
         self.layers.pop(index)
 
         if self.active_layer_index > index:
@@ -242,6 +264,7 @@ class LayerManager:
         return True
 
     def duplicate_layer(self):
+        self.history.save_state(self)
         layer = self.get_active_layer()
         new_layer = layer.copy()
         new_layer.name = f"{layer.name} Copy"
@@ -252,6 +275,7 @@ class LayerManager:
 
     def move_layer_up(self):
         if self.active_layer_index < len(self.layers) - 1:
+            self.history.save_state(self)
             self.layers[self.active_layer_index], self.layers[self.active_layer_index + 1] = \
                 self.layers[self.active_layer_index +
                             1], self.layers[self.active_layer_index]
@@ -262,6 +286,7 @@ class LayerManager:
 
     def move_layer_down(self):
         if self.active_layer_index > 0:
+            self.history.save_state(self)
             self.layers[self.active_layer_index], self.layers[self.active_layer_index - 1] = \
                 self.layers[self.active_layer_index -
                             1], self.layers[self.active_layer_index]
@@ -271,6 +296,7 @@ class LayerManager:
         return False
 
     def toggle_visibility(self, index):
+        self.history.save_state(self)
         self.layers[index].visible = not self.layers[index].visible
         self.mark_dirty()
 
@@ -548,6 +574,7 @@ class DrawingCanvas(tk.Canvas):
         self._selection_drag_base_pixels = None
         self._selection_drag_pixels = None
         self._selection_drag_bounds = None
+        self._selection_drag_history_snapshot = None
 
     def _ctrl_pressed(self, event):
         return bool(event.state & 0x0004)
@@ -600,6 +627,7 @@ class DrawingCanvas(tk.Canvas):
         self._selection_drag_base_pixels = None
         self._selection_drag_pixels = None
         self._selection_drag_bounds = None
+        self._selection_drag_history_snapshot = None
 
     def _build_selection_drag_data(self, layer, selection):
         x1, y1, x2, y2 = selection
@@ -639,6 +667,10 @@ class DrawingCanvas(tk.Canvas):
         self._selection_drag_bounds = bounds
         self._selection_drag_start = (x, y)
         self._selection_drag_offset = (0, 0)
+        # Capture the document state before the drag mutates any pixels so the
+        # move can be committed to history as a single undo step on release.
+        self._selection_drag_history_snapshot = self.history.snapshot(
+            self.layer_manager)
         return True
 
     def _render_selection_drag(self, offset_x, offset_y):
@@ -889,10 +921,9 @@ class DrawingCanvas(tk.Canvas):
                         self._selection_drag_original_pixels)
                     self.layer_manager.mark_dirty()
                 else:
-                    self.history.save_state(
-                        self.layer_manager.active_layer_index,
-                        self._selection_drag_original_pixels,
-                    )
+                    if self._selection_drag_history_snapshot is not None:
+                        self.history.push(
+                            self._selection_drag_history_snapshot)
                     x1, y1, x2, y2 = self._selection_drag_bounds
                     self.tool_manager.selection_start = (x1 + dx, y1 + dy)
                     self.tool_manager.selection_end = (x2 + dx, y2 + dy)
@@ -921,16 +952,14 @@ class DrawingCanvas(tk.Canvas):
 
         if tool == "pencil":
             if is_click:
-                self.history.save_state(
-                    self.layer_manager.active_layer_index, layer.pixels)
+                self.history.save_state(self.layer_manager)
             layer.set_pixel(cx, cy, app.foreground_rgba)
             self.layer_manager.mark_dirty()
             self.redraw()
 
         elif tool == "eraser":
             if is_click:
-                self.history.save_state(
-                    self.layer_manager.active_layer_index, layer.pixels)
+                self.history.save_state(self.layer_manager)
             layer.set_pixel(cx, cy, (0, 0, 0, 0))
             self.layer_manager.mark_dirty()
             self.redraw()
@@ -952,8 +981,7 @@ class DrawingCanvas(tk.Canvas):
         if target_color == fill_color:
             return
 
-        self.history.save_state(
-            self.layer_manager.active_layer_index, layer.pixels)
+        self.history.save_state(self.layer_manager)
 
         stack = [(start_x, start_y)]
         visited = set()
@@ -1691,7 +1719,10 @@ class App:
         new_name = new_name.strip()[:18]
         if not new_name:
             return
+        if new_name == layer.name:
+            return
 
+        self.history.save_state(self.layer_manager)
         layer.name = new_name
         self._update_layer_list()
 
@@ -1915,8 +1946,7 @@ class App:
         if selection:
             x1, y1, x2, y2 = selection
             layer = self.layer_manager.get_active_layer()
-            self.history.save_state(
-                self.layer_manager.active_layer_index, layer.pixels)
+            self.history.save_state(self.layer_manager)
             for y in range(max(0, y1), min(y2 + 1, layer.height)):
                 for x in range(max(0, x1), min(x2 + 1, layer.width)):
                     layer.set_pixel(x, y, (0, 0, 0, 0))
@@ -1933,7 +1963,7 @@ class App:
         color = self.foreground_rgba
         selection = self.tool_manager.selection
 
-        self.history.save_state(self.layer_manager.active_layer_index, layer.pixels)
+        self.history.save_state(self.layer_manager)
 
         if selection:
             x1, y1, x2, y2 = selection
@@ -2266,19 +2296,17 @@ class App:
         img.save(filepath, "PNG")
 
     def _undo(self):
-        state = self.history.undo(self.layer_manager.layers)
-        if state:
-            layer_idx, pixel_data = state
-            self.layer_manager.layers[layer_idx].pixels = bytearray(pixel_data)
-            self.layer_manager.mark_dirty()
+        if self.history.undo(self.layer_manager):
+            self.canvas._reset_selection_drag()
+            self.canvas.tool_manager.clear_selection()
+            self._update_layer_list()
             self.canvas.redraw()
 
     def _redo(self):
-        state = self.history.redo(self.layer_manager.layers)
-        if state:
-            layer_idx, pixel_data = state
-            self.layer_manager.layers[layer_idx].pixels = bytearray(pixel_data)
-            self.layer_manager.mark_dirty()
+        if self.history.redo(self.layer_manager):
+            self.canvas._reset_selection_drag()
+            self.canvas.tool_manager.clear_selection()
+            self._update_layer_list()
             self.canvas.redraw()
 
     def run(self):
