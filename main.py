@@ -1333,11 +1333,15 @@ class App:
         self.layer_canvas.pack(fill=tk.X, expand=False)
 
         self.layer_inner = tk.Frame(self.layer_canvas, bg="#333333")
-        self.layer_canvas.create_window(
+        self.layer_window = self.layer_canvas.create_window(
             (0, 0), window=self.layer_inner, anchor=tk.NW)
 
         self.layer_inner.bind("<Configure>", lambda e: self.layer_canvas.configure(
             scrollregion=self.layer_canvas.bbox("all")))
+        # Stretch the inner frame to the canvas width so layer rows always fill
+        # the panel regardless of the longest layer name.
+        self.layer_canvas.bind("<Configure>", lambda e: self.layer_canvas.itemconfig(
+            self.layer_window, width=e.width))
 
         btn_frame = tk.Frame(layer_frame, bg=PANEL_COLOR)
         btn_frame.pack(fill=tk.X, pady=2)
