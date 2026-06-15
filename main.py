@@ -153,11 +153,16 @@ class LayerManager:
         self._composite_cache = None
         self._composite_image_cache = None
         self._composite_dirty = True
+        # Optional callback fired whenever the document is mutated. Used by the
+        # app to track unsaved changes.
+        self.on_modified = None
 
     def mark_dirty(self):
         self._composite_dirty = True
         self._composite_cache = None
         self._composite_image_cache = None
+        if self.on_modified is not None:
+            self.on_modified()
 
     def get_active_layer(self):
         return self.layers[self.active_layer_index]
@@ -1064,6 +1069,7 @@ class App:
         self.history = HistoryManager(20)
         self.layer_manager = LayerManager(
             self.width, self.height, self.history)
+        self.layer_manager.on_modified = self._on_document_modified
         self.tool_manager = ToolManager()
         self.palette_manager = PaletteManager()
 
@@ -1071,6 +1077,7 @@ class App:
         self.background = "#FFFFFF"
         self.show_grid = True
         self.current_file = None
+        self.modified = False
         self._pending_view_reset = True
         self._pending_layer_select_job = None
         self._last_canvas_size = None
@@ -1081,7 +1088,13 @@ class App:
         self._setup_ui()
         self._setup_menu()
         self._setup_keybindings()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Initial setup may touch the document; start from a clean slate.
+        self.modified = False
         self.root.after_idle(self._request_view_reset)
+
+    def _on_document_modified(self):
+        self.modified = True
 
     def _apply_window_icon(self):
         icon_path = resource_path("icon.ico")
@@ -1610,7 +1623,7 @@ class App:
         file_menu.add_command(label="Import PNG", command=self._import_png)
         file_menu.add_command(label="Export PNG", command=self._export_flat)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit)
+        file_menu.add_command(label="Exit", command=self._on_close)
 
         view_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
@@ -1806,7 +1819,32 @@ class App:
         y = root_y + max((root_height - dialog_height) // 2, 0)
         dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
 
+    def _confirm_discard_changes(self):
+        """Prompt to save when there are unsaved changes.
+
+        Returns True if it is safe to proceed (saved or discarded),
+        False if the action should be cancelled.
+        """
+        if not self.modified:
+            return True
+
+        result = messagebox.askyesnocancel(
+            "Unsaved Changes",
+            "You have unsaved changes. Do you want to save them before continuing?"
+        )
+        if result is None:
+            return False  # Cancel
+        if result:
+            return self._save_file()  # Save succeeded only if it returns True
+        return True  # Discard
+
+    def _on_close(self):
+        if self._confirm_discard_changes():
+            self.root.destroy()
+
     def _new_file(self):
+        if not self._confirm_discard_changes():
+            return
         dialog = tk.Toplevel(self.root)
         dialog.title("New File")
         dialog.geometry("300x200")
@@ -1841,6 +1879,8 @@ class App:
         width_entry.focus_set()
 
     def _open_file(self):
+        if not self._confirm_discard_changes():
+            return
         filepath = filedialog.askopenfilename(
             title="Open Project",
             filetypes=[("SpriteLite Projects", "*.sprlite"),
@@ -1857,9 +1897,8 @@ class App:
 
     def _save_file(self):
         if not self.current_file:
-            self._save_file_as()
-        else:
-            self._save_to_file(self.current_file)
+            return self._save_file_as()
+        return self._save_to_file(self.current_file)
 
     def _save_file_as(self):
         filepath = filedialog.asksaveasfilename(
@@ -1867,9 +1906,10 @@ class App:
             defaultextension=".sprlite",
             filetypes=[("SpriteLite Projects", "*.sprlite")]
         )
-        if filepath:
-            self.current_file = filepath
-            self._save_to_file(filepath)
+        if not filepath:
+            return False
+        self.current_file = filepath
+        return self._save_to_file(filepath)
 
     def _save_to_file(self, filepath):
         try:
@@ -1881,6 +1921,9 @@ class App:
                 self._save_png(filepath)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save image: {e}")
+            return False
+        self.modified = False
+        return True
 
     def _export_flat(self):
         filepath = filedialog.asksaveasfilename(
@@ -1897,6 +1940,9 @@ class App:
     def _import_png(self):
         if not PIL_AVAILABLE:
             messagebox.showerror("Error", "PIL not available")
+            return
+
+        if not self._confirm_discard_changes():
             return
 
         filepath = filedialog.askopenfilename(
@@ -1970,6 +2016,7 @@ class App:
         self._update_canvas_size_display()
         self.history = history
         self.layer_manager = layer_manager
+        self.layer_manager.on_modified = self._on_document_modified
         self.canvas.layer_manager = layer_manager
         self.canvas.history = history
         self.canvas.zoom = DEFAULT_ZOOM
@@ -1980,6 +2027,8 @@ class App:
         self._last_canvas_size = None
         self._request_view_reset()
         self._update_layer_list()
+        # A freshly loaded/created document has no unsaved changes yet.
+        self.modified = False
 
     def _build_project_data(self):
         return {
