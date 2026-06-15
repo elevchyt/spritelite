@@ -18,6 +18,7 @@ SpriteLite is a simple, lightweight pixel editor built with Tkinter and designed
 - Layer-based editing with visibility toggles, duplication, renaming, and ordering.
 - PNG import/export and `.sprlite` project save/load support.
 - Zoom, pan, grid display, undo/redo, and palette loading.
+- Built-in palette selector that auto-detects palettes from a `palettes` folder next to the app (ships with Endesga 32, PICO-8, Paperback-2, Miyazaki 16, AGB, and NaNoNES).
 
 ## Project Goal
 

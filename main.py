@@ -62,6 +62,43 @@ DEFAULT_PALETTE = [
     "#B55088", "#F6757A", "#E8B796", "#C28569"
 ]
 
+# Name of the folder, next to the app, that holds selectable palettes.
+PALETTES_DIRNAME = "palettes"
+DEFAULT_PALETTE_NAME = "Endesga 32"
+
+# Palettes shipped out of the box. Written to the palettes folder on first run
+# (only when a file of the same name is missing) so users always have a
+# starting set and a working example of the expected file format.
+# PICO-8, Paperback-2, Miyazaki 16, AGB and NaNoNES are from lospec.com.
+BUILTIN_PALETTES = {
+    DEFAULT_PALETTE_NAME: DEFAULT_PALETTE,
+    "PICO-8": [
+        "#000000", "#1D2B53", "#7E2553", "#008751",
+        "#AB5236", "#5F574F", "#C2C3C7", "#FFF1E8",
+        "#FF004D", "#FFA300", "#FFEC27", "#00E436",
+        "#29ADFF", "#83769C", "#FF77A8", "#FFCCAA",
+    ],
+    "Paperback-2": [
+        "#B8C2B9", "#382B26",
+    ],
+    "Miyazaki 16": [
+        "#232228", "#284261", "#5F5854", "#878573",
+        "#B8B095", "#C3D5C7", "#EBECDC", "#2485A6",
+        "#54BAD2", "#754D45", "#C65046", "#E6928A",
+        "#1E7453", "#55A058", "#A1BF41", "#E3C054",
+    ],
+    "AGB": [
+        "#1E4959", "#3BA155", "#A0C76F", "#EBE0B2",
+    ],
+    "NaNoNES": [
+        "#000000", "#043D46", "#179785", "#624500",
+        "#006421", "#97B516", "#BD3506", "#E18734",
+        "#F7D39C", "#970E48", "#D350EB", "#F7ADEA",
+        "#4819AD", "#617FF8", "#A0E0FA", "#626262",
+        "#BDB7BD", "#FCFCFC",
+    ],
+}
+
 
 def resource_path(relative_path):
     """Resolve asset paths for both source runs and bundled executables."""
@@ -70,6 +107,19 @@ def resource_path(relative_path):
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+
+def app_dir():
+    """Directory containing the app: next to the executable when frozen,
+    next to this script otherwise. This is where the palettes folder lives."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def palettes_dir():
+    """Absolute path to the palettes folder that sits next to the app."""
+    return os.path.join(app_dir(), PALETTES_DIRNAME)
 
 
 class HistoryManager:
@@ -298,7 +348,22 @@ class PaletteManager:
             return self._load_pal(filepath)
         if ext == ".png":
             return self._load_image_colors(filepath)
+        if ext in (".hex", ".txt"):
+            return self._load_hex(filepath)
         raise ValueError("Unsupported palette format.")
+
+    def _load_hex(self, filepath):
+        colors = []
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                token = line.strip().lstrip('#')
+                if len(token) == 6:
+                    try:
+                        int(token, 16)
+                    except ValueError:
+                        continue
+                    colors.append(f"#{token.upper()}")
+        return self._set_colors(colors)
 
     def _load_gpl(self, filepath):
         colors = []
@@ -1083,6 +1148,7 @@ class App:
         self._last_canvas_size = None
         self.alt_eyedropper_active = False
         self._alt_poll_job = None
+        self._palette_poll_job = None
 
         self._load_icons()
         self._setup_ui()
@@ -1345,10 +1411,92 @@ class App:
         self.palette_inner.bind("<Configure>", lambda e: self.palette_canvas.configure(
             scrollregion=self.palette_canvas.bbox("all")))
 
+        self.palette_files = {}
+        self.palette_selector_var = tk.StringVar()
+        self.palette_selector = ttk.Combobox(
+            palette_frame, textvariable=self.palette_selector_var,
+            state="readonly", height=12)
+        self.palette_selector.pack(fill=tk.X, pady=(6, 0))
+        self.palette_selector.bind(
+            "<<ComboboxSelected>>", self._on_palette_selected)
+
         tk.Button(palette_frame, text="Load Palette", bg=PANEL_COLOR,
                   fg=TEXT_COLOR, command=self._load_palette).pack(fill=tk.X, pady=(6, 0))
 
+        self._ensure_palettes_folder()
+        self._refresh_palette_selector(select=DEFAULT_PALETTE_NAME)
         self._update_palette()
+        self._schedule_palette_folder_poll()
+
+    # File extensions the selector recognizes as palettes in the folder.
+    PALETTE_EXTENSIONS = (".pal", ".gpl", ".ase", ".png", ".hex", ".txt")
+
+    def _ensure_palettes_folder(self):
+        """Create the palettes folder next to the app and write any missing
+        built-in palettes so users always have a starting set."""
+        folder = palettes_dir()
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            return
+        for name, colors in BUILTIN_PALETTES.items():
+            path = os.path.join(folder, f"{name}.hex")
+            if os.path.exists(path):
+                continue
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    for color in colors:
+                        f.write(color.lstrip("#").upper() + "\n")
+            except OSError:
+                pass
+
+    def _scan_palette_files(self):
+        """Map display name -> file path for palettes found in the folder."""
+        found = {}
+        folder = palettes_dir()
+        try:
+            entries = sorted(os.listdir(folder))
+        except OSError:
+            return found
+        for entry in entries:
+            stem, ext = os.path.splitext(entry)
+            if ext.lower() not in self.PALETTE_EXTENSIONS:
+                continue
+            full = os.path.join(folder, entry)
+            if os.path.isfile(full) and stem not in found:
+                found[stem] = full
+        return found
+
+    def _refresh_palette_selector(self, select=None):
+        """Rescan the folder and update the dropdown's items."""
+        self.palette_files = self._scan_palette_files()
+        names = list(self.palette_files.keys())
+        self.palette_selector["values"] = names
+        if select is not None and select in self.palette_files:
+            self.palette_selector_var.set(select)
+        elif self.palette_selector_var.get() not in self.palette_files:
+            self.palette_selector_var.set("")
+
+    def _on_palette_selected(self, event=None):
+        name = self.palette_selector_var.get()
+        path = self.palette_files.get(name)
+        if not path:
+            return
+        try:
+            if not self.palette_manager.load_palette_file(path):
+                messagebox.showwarning(
+                    "Load Palette",
+                    f"No colors were found in '{name}'.")
+                return
+            self._update_palette()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load palette: {e}")
+
+    def _schedule_palette_folder_poll(self):
+        """Periodically rescan the palettes folder for added/removed files."""
+        self._refresh_palette_selector(select=self.palette_selector_var.get())
+        self._palette_poll_job = self.root.after(
+            3000, self._schedule_palette_folder_poll)
 
     def _setup_color_picker(self, parent):
         """Setup the color picker display."""
@@ -1584,7 +1732,7 @@ class App:
     def _load_palette(self):
         filepath = filedialog.askopenfilename(
             title="Load Palette",
-            filetypes=[("Palette Files", "*.pal *.gpl *.ase *.png"),
+            filetypes=[("Palette Files", "*.pal *.gpl *.ase *.png *.hex *.txt"),
                        ("All Files", "*.*")]
         )
         if filepath:
@@ -1840,6 +1988,9 @@ class App:
 
     def _on_close(self):
         if self._confirm_discard_changes():
+            if self._palette_poll_job is not None:
+                self.root.after_cancel(self._palette_poll_job)
+                self._palette_poll_job = None
             self.root.destroy()
 
     def _new_file(self):
