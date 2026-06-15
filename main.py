@@ -46,6 +46,13 @@ ACCENT_COLOR = "#007acc"
 ZOOM_LEVELS = [1, 2, 4, 8, 16]
 DEFAULT_ZOOM = ZOOM_LEVELS[-1]
 
+# Animation playback speed presets, as a percentage of full speed.
+ANIMATION_SPEEDS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10]
+DEFAULT_ANIMATION_SPEED = 100
+# Frame duration at 100% speed (milliseconds). At lower speeds the per-frame
+# delay scales up by 100 / speed, so 50% plays each frame twice as long.
+BASE_FRAME_DELAY_MS = 100
+
 # Each paste nudges the pasted pixels by this many cells from the copy origin
 # so a pasted copy doesn't perfectly cover the original and repeats cascade.
 PASTE_OFFSET = 1
@@ -129,9 +136,10 @@ def palettes_dir():
 class HistoryManager:
     """Manages undo/redo operations using full-document snapshots.
 
-    A snapshot captures the entire layer stack plus the active layer index, so
-    undo/redo restores both canvas pixel edits and structural layer changes
-    (add, delete, duplicate, reorder, rename, visibility).
+    A snapshot captures every animation frame (each a full layer stack) plus
+    the active frame and layer indices, so undo/redo restores canvas pixel
+    edits, structural layer changes (add, delete, duplicate, reorder, rename,
+    visibility), and frame changes (add, delete, reorder).
     """
 
     def __init__(self, max_levels=20):
@@ -142,8 +150,8 @@ class HistoryManager:
     def snapshot(self, layer_manager):
         """Capture the current document state without recording it."""
         return (
-            [layer.copy() for layer in layer_manager.layers],
-            layer_manager.active_layer_index,
+            [frame.copy() for frame in layer_manager.frames],
+            layer_manager.current_frame,
         )
 
     def push(self, snapshot):
@@ -158,9 +166,10 @@ class HistoryManager:
         self.push(self.snapshot(layer_manager))
 
     def _restore(self, layer_manager, snapshot):
-        layers, active_index = snapshot
-        layer_manager.layers = [layer.copy() for layer in layers]
-        layer_manager.active_layer_index = active_index
+        frames, current_frame = snapshot
+        layer_manager.frames = [frame.copy() for frame in frames]
+        layer_manager.current_frame = min(
+            max(current_frame, 0), len(layer_manager.frames) - 1)
         layer_manager.mark_dirty()
 
     def undo(self, layer_manager):
@@ -215,15 +224,34 @@ class Layer:
         return new_layer
 
 
+class Frame:
+    """A single animation keyframe: a full layer stack plus its active layer."""
+
+    def __init__(self, layers, active_layer_index=0):
+        self.layers = layers
+        self.active_layer_index = active_layer_index
+
+    def copy(self):
+        return Frame(
+            [layer.copy() for layer in self.layers],
+            self.active_layer_index,
+        )
+
+
 class LayerManager:
-    """Manages multiple layers with proper compositing."""
+    """Manages animation frames, each a stack of layers, with compositing.
+
+    The document is a list of frames. ``layers`` and ``active_layer_index``
+    always refer to the current frame, so the rest of the editor can keep
+    treating the manager as a single layer stack.
+    """
 
     def __init__(self, width, height, history_manager):
         self.width = width
         self.height = height
         self.history = history_manager
-        self.layers = [Layer("Layer 1", width, height)]
-        self.active_layer_index = 0
+        self.frames = [Frame([Layer("Layer 1", width, height)], 0)]
+        self.current_frame = 0
         self._composite_cache = None
         self._composite_image_cache = None
         self._composite_dirty = True
@@ -231,10 +259,85 @@ class LayerManager:
         # app to track unsaved changes.
         self.on_modified = None
 
-    def mark_dirty(self):
+    @property
+    def layers(self):
+        return self.frames[self.current_frame].layers
+
+    @layers.setter
+    def layers(self, value):
+        self.frames[self.current_frame].layers = value
+
+    @property
+    def active_layer_index(self):
+        return self.frames[self.current_frame].active_layer_index
+
+    @active_layer_index.setter
+    def active_layer_index(self, value):
+        self.frames[self.current_frame].active_layer_index = value
+
+    def frame_count(self):
+        return len(self.frames)
+
+    def add_frame(self):
+        """Append a new frame that duplicates the last frame's layers, and
+        make it current. Returns the new frame's index."""
+        self.history.save_state(self)
+        source = self.frames[-1]
+        self.frames.append(source.copy())
+        self.current_frame = len(self.frames) - 1
+        self.mark_dirty()
+        return self.current_frame
+
+    def delete_frame(self, index=None):
+        """Remove a frame. The document must always keep at least one frame."""
+        if len(self.frames) <= 1:
+            return False
+        if index is None:
+            index = self.current_frame
+        if not (0 <= index < len(self.frames)):
+            return False
+
+        self.history.save_state(self)
+        self.frames.pop(index)
+        if self.current_frame >= len(self.frames):
+            self.current_frame = len(self.frames) - 1
+        self.mark_dirty()
+        return True
+
+    def select_frame(self, index):
+        """Switch the current frame for display/editing. This is navigation,
+        not a mutation, so it does not flag the document as modified."""
+        if not (0 <= index < len(self.frames)) or index == self.current_frame:
+            return False
+        self.current_frame = index
+        self._invalidate_composite()
+        return True
+
+    def composite_layers(self, layers):
+        """Composite an arbitrary layer stack to flat RGBA bytes."""
+        composite = bytearray(self.width * self.height * 4)
+        for layer in reversed(layers):
+            if layer.visible:
+                for i in range(0, len(layer.pixels), 4):
+                    if layer.pixels[i + 3] > 0:
+                        composite[i] = layer.pixels[i]
+                        composite[i + 1] = layer.pixels[i + 1]
+                        composite[i + 2] = layer.pixels[i + 2]
+                        composite[i + 3] = layer.pixels[i + 3]
+        return bytes(composite)
+
+    def get_frame_image(self, index):
+        """Render a given frame's composite to a PIL image (uncached)."""
+        composite = self.composite_layers(self.frames[index].layers)
+        return PILImage.frombytes("RGBA", (self.width, self.height), composite)
+
+    def _invalidate_composite(self):
         self._composite_dirty = True
         self._composite_cache = None
         self._composite_image_cache = None
+
+    def mark_dirty(self):
+        self._invalidate_composite()
         if self.on_modified is not None:
             self.on_modified()
 
@@ -309,16 +412,7 @@ class LayerManager:
         if not self._composite_dirty and self._composite_cache is not None:
             return self._composite_cache
 
-        composite = bytearray(self.width * self.height * 4)
-        for layer in reversed(self.layers):
-            if layer.visible:
-                for i in range(0, len(layer.pixels), 4):
-                    if layer.pixels[i + 3] > 0:  # Alpha > 0
-                        composite[i] = layer.pixels[i]
-                        composite[i + 1] = layer.pixels[i + 1]
-                        composite[i + 2] = layer.pixels[i + 2]
-                        composite[i + 3] = layer.pixels[i + 3]
-        self._composite_cache = bytes(composite)
+        self._composite_cache = self.composite_layers(self.layers)
         self._composite_image_cache = None
         self._composite_dirty = False
         return self._composite_cache
@@ -847,6 +941,12 @@ class DrawingCanvas(tk.Canvas):
         if self._space_held or self._middle_dragging:
             return
 
+        # A click on the canvas means the user wants to edit, so leave
+        # playback mode and stay on the frame currently shown.
+        if self.app is not None and self.app._playing:
+            self.app._stop_playback(restore=False)
+            return
+
         cx, cy = self.screen_to_canvas(event.x, event.y)
         if self._eyedropper_active(event):
             self._sample_color(cx, cy, "foreground")
@@ -1185,6 +1285,13 @@ class App:
         self._clipboard = None
         self._paste_count = 0
 
+        # Animation playback state.
+        self.animation_speed = DEFAULT_ANIMATION_SPEED
+        self._playing = False
+        self._play_job = None
+        self._play_return_frame = 0
+        self._frame_cells = []
+
         self._load_icons()
         self._setup_ui()
         self._setup_menu()
@@ -1217,7 +1324,9 @@ class App:
             "selection": "icons/bounding-box.png",
             "eye_on": "icons/eye-on.png",
             "eye_off": "icons/eye-off.png",
-            "trash": "icons/trash.png"
+            "trash": "icons/trash.png",
+            "play": "icons/play.png",
+            "stop": "icons/stop.png"
         }
         for key, path in icon_files.items():
             try:
@@ -1250,10 +1359,14 @@ class App:
         canvas_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self.canvas_frame = canvas_container
+
+        # Animation timeline sits along the bottom; the canvas fills the rest.
+        self._setup_timeline(canvas_container)
+
         self.canvas = DrawingCanvas(
             canvas_container, self.layer_manager, self.tool_manager, self.history)
         self.canvas.app = self
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self._set_cursor(self.tool_manager.current_tool)
 
@@ -1351,6 +1464,231 @@ class App:
                 self.canvas.configure(cursor=cursor)
             except tk.TclError:
                 self.canvas.configure(cursor="crosshair")
+
+    def _attach_tooltip(self, widget, text):
+        def show(event):
+            if getattr(self, "tooltip_window", None):
+                self.tooltip_window.destroy()
+            self.tooltip_window = tk.Toplevel(widget)
+            self.tooltip_window.wm_overrideredirect(True)
+            x = widget.winfo_rootx() + widget.winfo_width() // 2
+            y = widget.winfo_rooty() - 25
+            self.tooltip_window.wm_geometry(f"+{x}+{y}")
+            tk.Label(self.tooltip_window, text=text, bg="#444444", fg="white",
+                     padx=6, pady=2, font=("Arial", 8)).pack()
+
+        def hide(event):
+            if getattr(self, "tooltip_window", None):
+                self.tooltip_window.destroy()
+                self.tooltip_window = None
+
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
+
+    # --- Animation timeline -------------------------------------------------
+
+    def _setup_timeline(self, parent):
+        """Setup the animation timeline bar along the bottom of the canvas."""
+        timeline = tk.Frame(parent, bg=PANEL_COLOR, height=66)
+        timeline.pack(side=tk.BOTTOM, fill=tk.X)
+        timeline.pack_propagate(False)
+
+        # Playback controls (left): play/stop toggle and speed selector.
+        controls = tk.Frame(timeline, bg=PANEL_COLOR)
+        controls.pack(side=tk.LEFT, padx=6)
+
+        play_icon = self.icons.get("play")
+        self.play_button = tk.Button(
+            controls, bg=PANEL_COLOR, activebackground=ACCENT_COLOR,
+            fg=TEXT_COLOR, relief=tk.FLAT, command=self._toggle_playback)
+        if play_icon:
+            self.play_button.config(image=play_icon, width=28, height=28)
+        else:
+            self.play_button.config(
+                text="Play", width=6, font=("Arial", 9, "bold"))
+        self.play_button.pack(side=tk.LEFT)
+        self._attach_tooltip(self.play_button, "Play / Stop Animation")
+
+        tk.Label(controls, text="Speed:", bg=PANEL_COLOR, fg=TEXT_COLOR,
+                 font=("Arial", 8)).pack(side=tk.LEFT, padx=(8, 2))
+        self.speed_var = tk.StringVar(value=f"{DEFAULT_ANIMATION_SPEED}%")
+        self.speed_selector = ttk.Combobox(
+            controls, textvariable=self.speed_var, state="readonly", width=5,
+            values=[f"{speed}%" for speed in ANIMATION_SPEEDS])
+        self.speed_selector.pack(side=tk.LEFT)
+        self.speed_selector.bind(
+            "<<ComboboxSelected>>", self._on_speed_selected)
+
+        # Add / delete frame buttons (right).
+        frame_buttons = tk.Frame(timeline, bg=PANEL_COLOR)
+        frame_buttons.pack(side=tk.RIGHT, padx=6)
+        add_frame_btn = tk.Button(
+            frame_buttons, text="+", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR,
+            command=self._add_frame)
+        add_frame_btn.pack(side=tk.LEFT, padx=1)
+        self._attach_tooltip(add_frame_btn, "Add Frame")
+        del_frame_btn = tk.Button(
+            frame_buttons, text="-", width=3, bg=PANEL_COLOR, fg=TEXT_COLOR,
+            command=self._delete_frame)
+        del_frame_btn.pack(side=tk.LEFT, padx=1)
+        self._attach_tooltip(del_frame_btn, "Delete Frame")
+
+        # Scrollable strip of frame cells (middle).
+        strip = tk.Frame(timeline, bg=PANEL_COLOR)
+        strip.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4, pady=6)
+        self.timeline_canvas = tk.Canvas(
+            strip, bg="#2a2a2a", highlightthickness=0)
+        self.timeline_scroll = tk.Scrollbar(
+            strip, orient=tk.HORIZONTAL, command=self.timeline_canvas.xview)
+        self.timeline_canvas.configure(
+            xscrollcommand=self.timeline_scroll.set)
+        self.timeline_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self.timeline_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.timeline_inner = tk.Frame(self.timeline_canvas, bg="#2a2a2a")
+        self.timeline_canvas.create_window(
+            (0, 0), window=self.timeline_inner, anchor=tk.NW)
+        self.timeline_inner.bind(
+            "<Configure>",
+            lambda e: self.timeline_canvas.configure(
+                scrollregion=self.timeline_canvas.bbox("all")))
+
+        self._update_timeline()
+
+    def _update_timeline(self):
+        """Rebuild the frame cells to match the current frame list."""
+        if not hasattr(self, "timeline_inner"):
+            return
+        for widget in self.timeline_inner.winfo_children():
+            widget.destroy()
+        self._frame_cells = []
+
+        current = self.layer_manager.current_frame
+        for i in range(self.layer_manager.frame_count()):
+            is_active = i == current
+            cell = tk.Frame(
+                self.timeline_inner,
+                bg=ACCENT_COLOR if is_active else BORDER_COLOR)
+            cell.pack(side=tk.LEFT, padx=2, pady=2)
+            label = tk.Label(
+                cell, text=str(i + 1), width=3, height=2,
+                bg=ACCENT_COLOR if is_active else "#3c3c3c", fg="white",
+                font=("Arial", 10, "bold"))
+            label.pack(padx=2, pady=2)
+            for widget in (cell, label):
+                widget.bind(
+                    "<Button-1>", lambda e, idx=i: self._select_frame(idx))
+            self._frame_cells.append((cell, label))
+
+        self.timeline_canvas.update_idletasks()
+        self.timeline_canvas.configure(
+            scrollregion=self.timeline_canvas.bbox("all"))
+
+    def _highlight_active_frame(self):
+        """Move the active highlight without rebuilding cells (used during
+        playback, where the frame list itself does not change)."""
+        current = self.layer_manager.current_frame
+        for i, (cell, label) in enumerate(self._frame_cells):
+            is_active = i == current
+            cell.configure(bg=ACCENT_COLOR if is_active else BORDER_COLOR)
+            label.configure(bg=ACCENT_COLOR if is_active else "#3c3c3c")
+
+    def _scroll_timeline_to_end(self):
+        self.timeline_canvas.update_idletasks()
+        self.timeline_canvas.configure(
+            scrollregion=self.timeline_canvas.bbox("all"))
+        self.timeline_canvas.xview_moveto(1.0)
+
+    def _on_speed_selected(self, event=None):
+        text = self.speed_var.get().rstrip("%")
+        try:
+            self.animation_speed = int(text)
+        except ValueError:
+            self.animation_speed = DEFAULT_ANIMATION_SPEED
+
+    def _select_frame(self, index):
+        self._stop_playback(restore=False)
+        if self.layer_manager.select_frame(index):
+            self.canvas._reset_selection_drag()
+            self.tool_manager.clear_selection()
+            self._update_layer_list()
+            self._highlight_active_frame()
+            self.canvas.redraw()
+
+    def _add_frame(self):
+        self._stop_playback(restore=False)
+        self.layer_manager.add_frame()
+        self.canvas._reset_selection_drag()
+        self.tool_manager.clear_selection()
+        self._update_layer_list()
+        self._update_timeline()
+        self.canvas.redraw()
+        self._scroll_timeline_to_end()
+
+    def _delete_frame(self):
+        self._stop_playback(restore=False)
+        if self.layer_manager.frame_count() <= 1:
+            messagebox.showinfo(
+                "Delete Frame",
+                "The project must keep at least one frame.",
+                parent=self.root)
+            return
+        if self.layer_manager.delete_frame():
+            self.canvas._reset_selection_drag()
+            self.tool_manager.clear_selection()
+            self._update_layer_list()
+            self._update_timeline()
+            self.canvas.redraw()
+
+    def _toggle_playback(self, event=None):
+        if self._playing:
+            self._stop_playback()
+        else:
+            self._start_playback()
+
+    def _start_playback(self):
+        if self.layer_manager.frame_count() <= 1:
+            return
+        self._playing = True
+        self._play_return_frame = self.layer_manager.current_frame
+        self._update_play_button()
+        self._schedule_next_frame()
+
+    def _schedule_next_frame(self):
+        speed = self.animation_speed or DEFAULT_ANIMATION_SPEED
+        delay = max(1, int(BASE_FRAME_DELAY_MS * 100 / speed))
+        self._play_job = self.root.after(delay, self._advance_playback)
+
+    def _advance_playback(self):
+        self._play_job = None
+        count = self.layer_manager.frame_count()
+        next_frame = (self.layer_manager.current_frame + 1) % count
+        self.layer_manager.select_frame(next_frame)
+        self._highlight_active_frame()
+        self.canvas.redraw()
+        if self._playing:
+            self._schedule_next_frame()
+
+    def _stop_playback(self, restore=True):
+        if not self._playing:
+            return
+        self._playing = False
+        if self._play_job is not None:
+            self.root.after_cancel(self._play_job)
+            self._play_job = None
+        if restore:
+            self.layer_manager.select_frame(self._play_return_frame)
+        self._update_play_button()
+        self._update_layer_list()
+        self._highlight_active_frame()
+        self.canvas.redraw()
+
+    def _update_play_button(self):
+        icon = self.icons.get("stop" if self._playing else "play")
+        if icon:
+            self.play_button.config(image=icon)
+        else:
+            self.play_button.config(text="Stop" if self._playing else "Play")
 
     def _setup_layer_panel(self, parent):
         """Setup the layer panel."""
@@ -1811,7 +2149,7 @@ class App:
             label="Save", command=self._save_file, accelerator="Ctrl+S")
         file_menu.add_command(label="Save As", command=self._save_file_as)
         file_menu.add_command(label="Import PNG", command=self._import_png)
-        file_menu.add_command(label="Export PNG", command=self._export_flat)
+        file_menu.add_command(label="Export PNG", command=self._export_dialog)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
@@ -2131,6 +2469,7 @@ class App:
 
     def _on_close(self):
         if self._confirm_discard_changes():
+            self._stop_playback(restore=False)
             if self._palette_poll_job is not None:
                 self.root.after_cancel(self._palette_poll_job)
                 self._palette_poll_job = None
@@ -2219,17 +2558,107 @@ class App:
         self.modified = False
         return True
 
-    def _export_flat(self):
+    # Export operations offered by the export dialog, in display order. The
+    # first entry is the default selection.
+    EXPORT_OPERATIONS = (
+        "Export image",
+        "Export animation as spritesheet",
+        "Export animation as individual frames",
+    )
+
+    def _export_dialog(self):
+        if not PIL_AVAILABLE:
+            messagebox.showerror("Error", "PIL not available")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Export")
+        dialog.geometry("360x170")
+        dialog.configure(bg=BG_COLOR)
+        dialog.transient(self.root)
+
+        tk.Label(dialog, text="Operation:", bg=BG_COLOR,
+                 fg=TEXT_COLOR).pack(pady=(18, 4))
+
+        operation_var = tk.StringVar(value=self.EXPORT_OPERATIONS[0])
+        operation_box = ttk.Combobox(
+            dialog, textvariable=operation_var, state="readonly",
+            values=list(self.EXPORT_OPERATIONS), width=36)
+        operation_box.pack(pady=2)
+
+        def do_export():
+            operation = operation_var.get()
+            dialog.destroy()
+            if operation == self.EXPORT_OPERATIONS[1]:
+                self._export_spritesheet()
+            elif operation == self.EXPORT_OPERATIONS[2]:
+                self._export_individual_frames()
+            else:
+                self._export_image()
+
+        dialog.bind("<Return>", lambda e: do_export())
+        export_button = tk.Button(
+            dialog, text="Export", command=do_export, bg=PANEL_COLOR,
+            fg=TEXT_COLOR, default=tk.ACTIVE)
+        export_button.pack(pady=20)
+        self._center_dialog(dialog)
+        operation_box.focus_set()
+
+    def _export_image(self):
         filepath = filedialog.asksaveasfilename(
-            title="Export PNG",
+            title="Export Image",
             defaultextension=".png",
             filetypes=[("PNG Files", "*.png")]
         )
-        if filepath:
-            try:
-                self._save_png(filepath)
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to export PNG: {e}")
+        if not filepath:
+            return
+        try:
+            self._save_png(filepath)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export PNG: {e}")
+
+    def _export_spritesheet(self):
+        filepath = filedialog.asksaveasfilename(
+            title="Export Spritesheet",
+            defaultextension=".png",
+            filetypes=[("PNG Files", "*.png")]
+        )
+        if not filepath:
+            return
+        try:
+            count = self.layer_manager.frame_count()
+            sheet = PILImage.new("RGBA", (self.width * count, self.height))
+            for i in range(count):
+                sheet.paste(self.layer_manager.get_frame_image(i),
+                            (i * self.width, 0))
+            sheet.save(filepath, "PNG")
+        except Exception as e:
+            messagebox.showerror(
+                "Error", f"Failed to export spritesheet: {e}")
+
+    def _export_individual_frames(self):
+        filepath = filedialog.asksaveasfilename(
+            title="Export Individual Frames",
+            defaultextension=".png",
+            filetypes=[("PNG Files", "*.png")]
+        )
+        if not filepath:
+            return
+        try:
+            directory = os.path.dirname(filepath)
+            base = os.path.splitext(os.path.basename(filepath))[0] or "sprite"
+            count = self.layer_manager.frame_count()
+            for i in range(count):
+                out_path = os.path.join(directory, f"{base}-{i + 1}.png")
+                self.layer_manager.get_frame_image(i).save(out_path, "PNG")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export frames: {e}")
+            return
+        messagebox.showinfo(
+            "Export Individual Frames",
+            f"Exported {count} frame(s) as '{base}-1.png' … "
+            f"'{base}-{count}.png'.",
+            parent=self.root)
 
     def _import_png(self):
         if not PIL_AVAILABLE:
@@ -2305,6 +2734,7 @@ class App:
         )
 
     def _apply_document_state(self, layer_manager, history):
+        self._stop_playback(restore=False)
         self.width = layer_manager.width
         self.height = layer_manager.height
         self._update_canvas_size_display()
@@ -2321,29 +2751,55 @@ class App:
         self._last_canvas_size = None
         self._request_view_reset()
         self._update_layer_list()
+        self._update_timeline()
         # A freshly loaded/created document has no unsaved changes yet.
         self.modified = False
 
     def _build_project_data(self):
         return {
             "format": "spritelite-project",
-            "version": 1,
+            "version": 2,
             "width": self.width,
             "height": self.height,
-            "active_layer_index": self.layer_manager.active_layer_index,
+            "current_frame": self.layer_manager.current_frame,
             "foreground": self.foreground,
             "background": self.background,
             "show_grid": self.show_grid,
             "palette": self.palette_manager.colors,
-            "layers": [
+            "frames": [
                 {
-                    "name": layer.name,
-                    "visible": layer.visible,
-                    "pixels": bytes(layer.pixels).hex()
+                    "active_layer_index": frame.active_layer_index,
+                    "layers": [
+                        {
+                            "name": layer.name,
+                            "visible": layer.visible,
+                            "pixels": bytes(layer.pixels).hex()
+                        }
+                        for layer in frame.layers
+                    ]
                 }
-                for layer in self.layer_manager.layers
+                for frame in self.layer_manager.frames
             ]
         }
+
+    def _parse_project_layers(self, layers_data, width, height):
+        """Turn serialized layer dicts into Layer objects, validating size."""
+        expected_pixel_bytes = width * height * 4
+        layers = []
+        for layer_data in layers_data:
+            layer = Layer(
+                layer_data.get("name", f"Layer {len(layers) + 1}"),
+                width, height)
+            layer.visible = bool(layer_data.get("visible", True))
+            pixel_data = bytearray.fromhex(layer_data.get("pixels", ""))
+            if len(pixel_data) != expected_pixel_bytes:
+                raise ValueError(
+                    "Layer pixel data does not match project size.")
+            layer.pixels = pixel_data
+            layers.append(layer)
+        if not layers:
+            layers = [Layer("Layer 1", width, height)]
+        return layers
 
     def _load_project_file(self, filepath):
         with open(filepath, "r", encoding="utf-8") as file_handle:
@@ -2359,26 +2815,28 @@ class App:
 
         history = HistoryManager(20)
         layer_manager = LayerManager(width, height, history)
-        layer_manager.layers = []
 
-        expected_pixel_bytes = width * height * 4
-        for layer_data in project_data.get("layers", []):
-            layer = Layer(layer_data.get(
-                "name", f"Layer {len(layer_manager.layers) + 1}"), width, height)
-            layer.visible = bool(layer_data.get("visible", True))
-            pixel_data = bytearray.fromhex(layer_data.get("pixels", ""))
-            if len(pixel_data) != expected_pixel_bytes:
-                raise ValueError(
-                    "Layer pixel data does not match project size.")
-            layer.pixels = pixel_data
-            layer_manager.layers.append(layer)
+        frames_data = project_data.get("frames")
+        if isinstance(frames_data, list) and frames_data:
+            frames = []
+            for frame_data in frames_data:
+                layers = self._parse_project_layers(
+                    frame_data.get("layers", []), width, height)
+                active = int(frame_data.get("active_layer_index", 0))
+                frames.append(
+                    Frame(layers, min(max(active, 0), len(layers) - 1)))
+        else:
+            # Migrate legacy (version 1) projects: their single layer stack
+            # lived at the top level and becomes the project's only frame.
+            layers = self._parse_project_layers(
+                project_data.get("layers", []), width, height)
+            active = int(project_data.get("active_layer_index", 0))
+            frames = [Frame(layers, min(max(active, 0), len(layers) - 1))]
 
-        if not layer_manager.layers:
-            layer_manager.layers = [Layer("Layer 1", width, height)]
-
-        active_layer_index = int(project_data.get("active_layer_index", 0))
-        layer_manager.active_layer_index = min(
-            max(active_layer_index, 0), len(layer_manager.layers) - 1)
+        layer_manager.frames = frames
+        current_frame = int(project_data.get("current_frame", 0))
+        layer_manager.current_frame = min(
+            max(current_frame, 0), len(frames) - 1)
 
         self.foreground = project_data.get("foreground", "#000000")
         self.background = project_data.get("background", "#FFFFFF")
@@ -2405,17 +2863,21 @@ class App:
         img.save(filepath, "PNG")
 
     def _undo(self):
+        self._stop_playback(restore=False)
         if self.history.undo(self.layer_manager):
             self.canvas._reset_selection_drag()
             self.canvas.tool_manager.clear_selection()
             self._update_layer_list()
+            self._update_timeline()
             self.canvas.redraw()
 
     def _redo(self):
+        self._stop_playback(restore=False)
         if self.history.redo(self.layer_manager):
             self.canvas._reset_selection_drag()
             self.canvas.tool_manager.clear_selection()
             self._update_layer_list()
+            self._update_timeline()
             self.canvas.redraw()
 
     def run(self):
