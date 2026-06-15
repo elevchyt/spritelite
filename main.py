@@ -488,8 +488,16 @@ class DrawingCanvas(tk.Canvas):
         return self.app.is_alt_eyedropper_active(event)
 
     def _sample_color(self, x, y, target):
-        layer = self.layer_manager.get_active_layer()
-        color = layer.get_pixel(x, y)
+        width = self.layer_manager.width
+        height = self.layer_manager.height
+        if not (0 <= x < width and 0 <= y < height):
+            return
+
+        # Sample from the composite of all visible layers so the eyedropper
+        # is layer-agnostic ("what you see is what you pick").
+        composite = self.layer_manager.render_composite()
+        idx = (y * width + x) * 4
+        color = composite[idx:idx + 4]
         if color[3] == 0:
             return
 
