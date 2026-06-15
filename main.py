@@ -46,6 +46,10 @@ ACCENT_COLOR = "#007acc"
 ZOOM_LEVELS = [1, 2, 4, 8, 16]
 DEFAULT_ZOOM = ZOOM_LEVELS[-1]
 
+# Each paste nudges the pasted pixels by this many cells from the copy origin
+# so a pasted copy doesn't perfectly cover the original and repeats cascade.
+PASTE_OFFSET = 1
+
 APP_VERSION = "1.0"
 GITHUB_REPO_URL = "https://github.com/elevchyt/spritelite"
 APP_DEVELOPER = "Eleftherios Hytiroglou"
@@ -1177,6 +1181,9 @@ class App:
         self.alt_eyedropper_active = False
         self._alt_poll_job = None
         self._palette_poll_job = None
+        # Copied selection pixels, ready to paste. None when nothing is copied.
+        self._clipboard = None
+        self._paste_count = 0
 
         self._load_icons()
         self._setup_ui()
@@ -1808,6 +1815,21 @@ class App:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._on_close)
 
+        edit_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        edit_menu.add_command(
+            label="Undo", command=self._undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(
+            label="Redo", command=self._redo, accelerator="Ctrl+Y")
+        edit_menu.add_separator()
+        edit_menu.add_command(
+            label="Copy", command=self._copy_selection, accelerator="Ctrl+C")
+        edit_menu.add_command(
+            label="Paste", command=self._paste_clipboard, accelerator="Ctrl+V")
+        edit_menu.add_separator()
+        edit_menu.add_command(
+            label="Select All", command=self._select_all, accelerator="Ctrl+A")
+
         view_menu = tk.Menu(menubar, bg=PANEL_COLOR, fg=TEXT_COLOR, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
         self.grid_var = tk.BooleanVar(value=True)
@@ -1851,6 +1873,10 @@ class App:
         self.root.bind("<Control-n>", lambda e: self._new_file())
         self.root.bind("<Control-a>", lambda e: self._select_all())
         self.root.bind("<Control-A>", lambda e: self._select_all())
+        self.root.bind("<Control-c>", self._copy_selection)
+        self.root.bind("<Control-C>", self._copy_selection)
+        self.root.bind("<Control-v>", self._paste_clipboard)
+        self.root.bind("<Control-V>", self._paste_clipboard)
         self.root.bind("<Control-h>", lambda e: self._toggle_grid())
         self.root.bind("<F2>", lambda e: self._rename_active_layer())
         self.root.bind("<Delete>", lambda e: self._delete_selection())
@@ -1939,6 +1965,89 @@ class App:
 
     def _clear_selection(self, event=None):
         self.canvas.clear_selection()
+        return "break"
+
+    def _typing_in_text_field(self):
+        focused_widget = self.root.focus_get()
+        return isinstance(focused_widget, (tk.Entry, tk.Text, tk.Spinbox))
+
+    def _copy_selection(self, event=None):
+        if self._typing_in_text_field():
+            return
+        selection = self.tool_manager.selection
+        if not selection:
+            return "break"
+
+        layer = self.layer_manager.get_active_layer()
+        x1, y1, x2, y2 = selection
+        x1 = max(0, min(x1, layer.width - 1))
+        y1 = max(0, min(y1, layer.height - 1))
+        x2 = max(0, min(x2, layer.width - 1))
+        y2 = max(0, min(y2, layer.height - 1))
+        width = x2 - x1 + 1
+        height = y2 - y1 + 1
+
+        pixels = bytearray(width * height * 4)
+        for row in range(height):
+            src_y = y1 + row
+            for col in range(width):
+                src_x = x1 + col
+                src_idx = (src_y * layer.width + src_x) * 4
+                dst_idx = (row * width + col) * 4
+                pixels[dst_idx:dst_idx + 4] = layer.pixels[src_idx:src_idx + 4]
+
+        self._clipboard = {
+            "width": width,
+            "height": height,
+            "pixels": pixels,
+            "origin": (x1, y1),
+        }
+        self._paste_count = 0
+        return "break"
+
+    def _paste_clipboard(self, event=None):
+        if self._typing_in_text_field():
+            return
+        clip = self._clipboard
+        if not clip:
+            return "break"
+
+        layer = self.layer_manager.get_active_layer()
+        width = clip["width"]
+        height = clip["height"]
+        pixels = clip["pixels"]
+        origin_x, origin_y = clip["origin"]
+
+        self._paste_count += 1
+        offset = PASTE_OFFSET * self._paste_count
+        dest_x = origin_x + offset
+        dest_y = origin_y + offset
+
+        self.history.save_state(self.layer_manager)
+        for row in range(height):
+            paste_y = dest_y + row
+            if not (0 <= paste_y < layer.height):
+                continue
+            for col in range(width):
+                paste_x = dest_x + col
+                if not (0 <= paste_x < layer.width):
+                    continue
+                src_idx = (row * width + col) * 4
+                # Composite over the destination so transparent border pixels
+                # of the copied rectangle don't punch holes in the layer.
+                if pixels[src_idx + 3] == 0:
+                    continue
+                dst_idx = (paste_y * layer.width + paste_x) * 4
+                layer.pixels[dst_idx:dst_idx + 4] = pixels[src_idx:src_idx + 4]
+
+        self.layer_manager.mark_dirty()
+
+        # Select the pasted block with the selection tool so it can be nudged
+        # or dragged into place immediately.
+        self._select_tool("selection")
+        self.tool_manager.selection_start = (dest_x, dest_y)
+        self.tool_manager.selection_end = (dest_x + width - 1, dest_y + height - 1)
+        self.canvas.redraw()
         return "break"
 
     def _delete_selection(self):
