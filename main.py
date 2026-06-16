@@ -57,7 +57,7 @@ BASE_FRAME_DELAY_MS = 100
 # so a pasted copy doesn't perfectly cover the original and repeats cascade.
 PASTE_OFFSET = 1
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 GITHUB_REPO_URL = "https://github.com/elevchyt/spritelite"
 APP_DEVELOPER = "Eleftherios Hytiroglou"
 
